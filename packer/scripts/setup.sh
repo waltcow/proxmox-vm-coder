@@ -44,6 +44,7 @@ sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
     curl \
     ca-certificates \
     git \
+    net-tools \
     proxychains4 \
     jq \
     wget \
@@ -54,7 +55,25 @@ sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
 echo "✓ Required packages installed"
 
 # ============================================
-# 4. 配置 proxychains4
+# 4. 安装 Node.js（NodeSource APT）
+# ============================================
+echo ""
+echo "==> Installing Node.js via NodeSource APT..."
+
+if curl -fsSL https://deb.nodesource.com/setup_24.x | sudo -E bash -; then
+    if sudo DEBIAN_FRONTEND=noninteractive apt-get install -y nodejs; then
+        node -v
+        npm -v
+        echo "✓ Node.js installed via NodeSource APT"
+    else
+        echo "⚠️ Node.js install skipped (apt failure)"
+    fi
+else
+    echo "⚠️ Node.js install skipped (network failure)"
+fi
+
+# ============================================
+# 5. 配置 proxychains4
 # ============================================
 echo ""
 echo "==> Configuring proxychains4..."
@@ -70,17 +89,14 @@ tcp_read_time_out 15000
 tcp_connect_time_out 8000
 
 [ProxyList]
-# 添加你的代理服务器配置
-# 示例（取消注释并修改）:
-# socks5 127.0.0.1 1080
-# socks4 127.0.0.1 1080
-# http  127.0.0.1 8080
+# 默认使用 socks5 代理（含用户名/密码）
+socks5 192.168.50.142 7891 root admin
 EOF
 
 echo "✓ Proxychains4 configured"
 
 # ============================================
-# 5. 禁用自动更新（模板中不需要）
+# 6. 禁用自动更新（模板中不需要）
 # ============================================
 echo ""
 echo "==> Disabling automatic updates..."
@@ -93,7 +109,7 @@ sudo systemctl mask apt-daily-upgrade.service 2>/dev/null || true
 echo "✓ Automatic updates disabled"
 
 # ============================================
-# 6. 确保 qemu-guest-agent 已启用
+# 7. 确保 qemu-guest-agent 已启用
 # ============================================
 echo ""
 echo "==> Ensuring qemu-guest-agent is enabled..."
@@ -104,7 +120,7 @@ sudo systemctl start qemu-guest-agent
 echo "✓ QEMU Guest Agent enabled"
 
 # ============================================
-# 7. 配置 cloud-init
+# 8. 配置 cloud-init
 # ============================================
 echo ""
 echo "==> Configuring cloud-init datasource priority..."
@@ -117,7 +133,7 @@ EOF
 echo "✓ Cloud-init configured"
 
 # ============================================
-# 8. 禁用 cloud-init 网络等待超时
+# 9. 禁用 cloud-init 网络等待超时
 # ============================================
 echo ""
 echo "==> Configuring systemd network wait timeout..."
@@ -130,6 +146,19 @@ TimeoutStartSec=10s
 EOF
 
 echo "✓ Network wait timeout configured"
+
+# ============================================
+# 10. 写入模板构建时间
+# ============================================
+echo ""
+echo "==> Writing template build metadata..."
+
+BUILD_TIME_UTC="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+sudo tee /etc/template-build-info > /dev/null <<EOF
+TEMPLATE_BUILD_TIME_UTC=${BUILD_TIME_UTC}
+EOF
+
+echo "✓ Template build metadata written: ${BUILD_TIME_UTC}"
 
 # ============================================
 # 完成

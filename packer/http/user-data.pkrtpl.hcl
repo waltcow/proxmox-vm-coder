@@ -16,8 +16,11 @@ autoinstall:
     network:
       version: 2
       ethernets:
-        ens18:
+        all:
+          match:
+            name: "en*"
           dhcp4: true
+          dhcp6: false
 
   # ============================================
   # 存储配置（使用整个磁盘 + LVM）
@@ -42,8 +45,8 @@ autoinstall:
   identity:
     hostname: ubuntu-packer-template
     username: ${ssh_username}
-    # 密码将在 late-commands 中设置
-    password: "$6$rounds=4096$saltsalt$5wVcsOiB3CqLkZ7JnHQMhB8UH5VZdF1yLPzqIjZBqLKHLVLKHLVLKHLVLKH"
+    # 使用有效的密码哈希（MD5 crypt）
+    password: "$1$8U.XHvTY$RkqySy4krtTiaSNpH8gR.."
 
   # ============================================
   # 软件包配置
@@ -61,14 +64,18 @@ autoinstall:
     disable_root: false
     package_update: false
     package_upgrade: false
+    ssh_pwauth: true
+    chpasswd:
+      expire: false
+      list: |
+        ${ssh_username}:${ssh_password}
 
   # ============================================
   # 安装后命令
   # ============================================
   late-commands:
-    # 设置 packer 用户密码（使用 chpasswd）
-    - "echo '${ssh_username}:${ssh_password}' | curtin in-target --target=/target -- chpasswd"
-
+    # 标记 autoinstall 完成
+    - curtin in-target --target=/target -- bash -c "echo 'autoinstall done' > /var/log/autoinstall.done"
     # 配置 packer 用户的 sudo 权限
     - echo '${ssh_username} ALL=(ALL) NOPASSWD:ALL' > /target/etc/sudoers.d/${ssh_username}
     - chmod 440 /target/etc/sudoers.d/${ssh_username}

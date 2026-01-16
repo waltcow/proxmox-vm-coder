@@ -140,8 +140,9 @@ build {
   provisioner "shell" {
     inline = [
       "echo '==> Waiting for cloud-init to complete...'",
-      "cloud-init status --wait",
-      "echo '==> Cloud-init completed successfully'"
+      "sudo cloud-init status || true",
+      "sudo cloud-init status --wait || true",
+      "echo '==> Cloud-init completed or is disabled'"
     ]
   }
 

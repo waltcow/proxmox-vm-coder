@@ -87,6 +87,9 @@ echo "==> Removing specific cloud-init configuration files..."
 # 这些文件会干扰 Proxmox 的 cloud-init 配置
 sudo rm -f /etc/cloud/cloud.cfg.d/50-curtin-networking.cfg
 sudo rm -f /etc/cloud/cloud.cfg.d/subiquity-disable-cloudinit-networking.cfg
+sudo rm -f /etc/cloud/cloud.cfg.d/90-installer-network.cfg
+sudo rm -f /etc/cloud/cloud.cfg.d/99-installer.cfg
+sudo rm -f /etc/cloud/cloud-init.disabled
 sudo rm -f /etc/netplan/50-cloud-init.yaml
 
 echo "✓ Specific cloud-init files removed"
@@ -109,7 +112,7 @@ echo "==> Cleaning shell history..."
 
 history -c
 cat /dev/null > ~/.bash_history
-sudo cat /dev/null > /root/.bash_history 2>/dev/null || true
+sudo sh -c ': > /root/.bash_history' 2>/dev/null || true
 
 echo "✓ Shell history cleaned"
 

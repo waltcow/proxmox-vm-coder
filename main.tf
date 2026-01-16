@@ -244,7 +244,7 @@ resource "proxmox_virtual_environment_vm" "workspace" {
   }
 
   vga {
-    type = "serial0"
+    type = "std"
   }
 
   serial_device {
@@ -283,13 +283,6 @@ module "code-server" {
   additional_args = "--disable-workspace-trust"
 }
 
-module "cursor" {
-  count    = data.coder_workspace.me.start_count
-  source   = "registry.coder.com/coder/cursor/coder"
-  version  = "1.3.0"
-  agent_id = coder_agent.dev.id
-}
-
 module "vscode-web" {
   count          = data.coder_workspace.me.start_count
   source         = "registry.coder.com/coder/vscode-web/coder"
@@ -303,7 +296,5 @@ module "claude-code" {
   count                   = data.coder_workspace.me.start_count
   source                  = "registry.coder.com/coder/claude-code/coder"
   version                 = "4.4.1"
-  agent_id                = coder_agent.dev.id
-  workdir                 = "/home/${local.linux_user}"
-  claude_code_oauth_token = var.claude_code_oauth_token != "" ? var.claude_code_oauth_token : null
+  agent_id                = coder_agent.dev.id  
 }
