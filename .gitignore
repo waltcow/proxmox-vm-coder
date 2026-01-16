@@ -40,3 +40,9 @@ terraform.rc
 
 # Ignore lock files (optional, comment out if you want to track them)
 .terraform.lock.hcl
+
+# Packer
+packer_cache/
+packer/output-*/
+packer/*.pkrvars.hcl
+!packer/*.pkrvars.hcl.example

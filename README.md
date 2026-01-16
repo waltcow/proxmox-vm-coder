@@ -23,8 +23,12 @@ RELEASE=noble
 IMG_URL="https://mirrors.tuna.tsinghua.edu.cn/ubuntu-cloud-images/${RELEASE}/current/${RELEASE}-server-cloudimg-amd64.img"
 IMG_PATH="/var/lib/vz/template/iso/${RELEASE}-server-cloudimg-amd64.img"
 
-# 下载云镜像
-wget "$IMG_URL" -O "$IMG_PATH"
+# 下载云镜像（优先使用缓存）
+if [ -f "$IMG_PATH" ] && [ -s "$IMG_PATH" ]; then
+  echo "Using cached image: $IMG_PATH"
+else
+  wget "$IMG_URL" -O "$IMG_PATH"
+fi
 
 # 创建基础虚拟机（示例 ID 999），启用 QGA，修正启动顺序
 NAME="ubuntu-${RELEASE}-cloudinit"
@@ -36,13 +40,34 @@ qm set 999 --scsi0 local-lvm:vm-999-disk-0
 qm set 999 --ide2 local-lvm:cloudinit
 qm set 999 --serial0 socket --vga serial0
 qm set 999 --boot 'order=scsi0;ide2;net0'
-
-# 在 'local' 存储上启用 Snippets（一次性操作）
-pvesm set local --content snippets,vztmpl,backup,iso
-
-# 转换为模板
-qm template 999
 ```
+
+### （可选）在模板中预装 Node.js 等 SDK
+
+建议在模板构建阶段完成安装，以减少工作空间首次启动时间。可选两种常见方式：
+
+- **NodeSource APT**（固定版本、简单）
+- **nvm**（按用户安装、易切换版本）
+
+示例（NodeSource，固定 LTS 版本）：
+
+```bash
+# 先启动模板 VM 并进入（或用 cloud-init/packer 构建时执行）
+sudo apt-get update
+sudo apt-get install -y curl ca-certificates gnupg build-essential git python3
+curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+sudo apt-get install -y nodejs
+node -v && npm -v
+
+# 清理，减少模板体积
+sudo apt-get clean
+sudo rm -rf /var/lib/apt/lists/*
+```
+
+建议：
+- 固定 Node.js 主版本（如 20.x/22.x），避免模板不稳定。
+- 若使用 nvm，考虑放到 `/etc/profile.d/` 并为默认用户设置 `nvm alias default`。
+- 定期重建模板以更新安全补丁与 SDK 版本。
 
 验证：
 
@@ -143,6 +168,12 @@ coder templates push --yes proxmox-cloudinit --directory . | cat
 - Snippet 上传错误：存储必须包含 `Snippets`；令牌需要数据存储权限；路径格式 `<storage>:snippets/<file>` 由提供商处理
 - 权限错误：确保令牌的角色覆盖目标节点和存储
 - 验证 snippet/QGA：`qm config <vmid> | egrep 'cicustom|ide2|ciuser'`
+- systemd-networkd-wait-online 卡住（start running 38s/no limit）：
+  - 检查是否使用了 cloud-init 正确配置网络（Netplan/Cloud-Init）。
+  - 若仅为等待超时，可临时降低/禁用等待：  
+    `sudo systemctl disable systemd-networkd-wait-online.service`  
+    或 `sudo systemctl edit systemd-networkd-wait-online.service` 设置 `TimeoutStartSec=10s`。
+- 网络需使用 DHCP（cloud-init/Netplan），确保获取地址后网络在线。
 
 ## 参考资料
 
