@@ -1,28 +1,11 @@
 #cloud-config
 hostname: ${hostname}
 
-apt:
-  primary:
-    - arches: [default]
-      uri: https://mirrors.tuna.tsinghua.edu.cn/ubuntu/
-  security:
-    - arches: [default]
-      uri: https://mirrors.tuna.tsinghua.edu.cn/ubuntu/
-
 users:
   - name: ${linux_user}
     groups: [sudo]
     shell: /bin/bash
     sudo: ["ALL=(ALL) NOPASSWD:ALL"]
-
-package_update: true
-package_upgrade: false
-packages:
-  - curl
-  - ca-certificates
-  - git
-  - proxychains4
-  - jq  
 
 write_files:
   - path: /opt/coder/init.sh
