@@ -1,0 +1,17 @@
+ # Proxmox API
+proxmox_api_url          = "https://192.168.1.100:8006/api2/json"
+proxmox_api_token_id     = "terraform@pve!coder"
+proxmox_api_token_secret = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+
+# SSH 到节点（用于上传 snippet）
+proxmox_host     = "192.168.1.100"
+proxmox_password = "your-root-password"
+proxmox_ssh_user = "root"
+
+# 基础设施默认值
+proxmox_node        = "pve"
+disk_storage        = "local-lvm"
+snippet_storage     = "local"
+bridge              = "vmbr0"
+vlan                = 0
+clone_template_vmid = 999
