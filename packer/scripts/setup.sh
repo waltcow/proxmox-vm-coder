@@ -73,7 +73,30 @@ else
 fi
 
 # ============================================
-# 5. 配置 proxychains4
+# 5. 安装 Go（官方发行版）
+# ============================================
+echo ""
+echo "==> Installing Go from official tarball..."
+
+GO_VERSION="1.24.12"
+GO_TARBALL="go${GO_VERSION}.linux-amd64.tar.gz"
+GO_URL="https://mirrors.aliyun.com/golang/${GO_TARBALL}"
+
+if curl -fsSL "${GO_URL}" -o "/tmp/${GO_TARBALL}"; then
+    sudo rm -rf /usr/local/go
+    sudo tar -C /usr/local -xzf "/tmp/${GO_TARBALL}"
+    sudo tee /etc/profile.d/go.sh > /dev/null <<'EOF'
+export PATH="/usr/local/go/bin:${PATH}"
+EOF
+    export PATH="/usr/local/go/bin:${PATH}"
+    go version
+    echo "✓ Go installed from official tarball"
+else
+    echo "⚠️ Go install skipped (download failure)"
+fi
+
+# ============================================
+# 6. 配置 proxychains4
 # ============================================
 echo ""
 echo "==> Configuring proxychains4..."
@@ -96,7 +119,7 @@ EOF
 echo "✓ Proxychains4 configured"
 
 # ============================================
-# 6. 禁用自动更新（模板中不需要）
+# 7. 禁用自动更新（模板中不需要）
 # ============================================
 echo ""
 echo "==> Disabling automatic updates..."
@@ -109,7 +132,7 @@ sudo systemctl mask apt-daily-upgrade.service 2>/dev/null || true
 echo "✓ Automatic updates disabled"
 
 # ============================================
-# 7. 确保 qemu-guest-agent 已启用
+# 8. 确保 qemu-guest-agent 已启用
 # ============================================
 echo ""
 echo "==> Ensuring qemu-guest-agent is enabled..."
@@ -120,7 +143,7 @@ sudo systemctl start qemu-guest-agent
 echo "✓ QEMU Guest Agent enabled"
 
 # ============================================
-# 8. 配置 cloud-init
+# 9. 配置 cloud-init
 # ============================================
 echo ""
 echo "==> Configuring cloud-init datasource priority..."
@@ -133,7 +156,7 @@ EOF
 echo "✓ Cloud-init configured"
 
 # ============================================
-# 9. 禁用 cloud-init 网络等待超时
+# 10. 禁用 cloud-init 网络等待超时
 # ============================================
 echo ""
 echo "==> Configuring systemd network wait timeout..."
@@ -148,7 +171,7 @@ EOF
 echo "✓ Network wait timeout configured"
 
 # ============================================
-# 10. 写入模板构建时间
+# 11. 写入模板构建时间
 # ============================================
 echo ""
 echo "==> Writing template build metadata..."

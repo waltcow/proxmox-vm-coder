@@ -94,13 +94,6 @@ variable "clone_template_vmid" {
   type        = number
 }
 
-variable "claude_code_oauth_token" {
-  type        = string
-  description = "使用 `claude setup-token` 命令生成"
-  sensitive   = true
-  default     = ""
-}
-
 data "coder_workspace" "me" {}
 data "coder_workspace_owner" "me" {}
 
@@ -275,26 +268,12 @@ resource "proxmox_virtual_environment_vm" "workspace" {
   depends_on = [proxmox_virtual_environment_file.cloud_init_user_data]
 }
 
-module "code-server" {
-  count    = data.coder_workspace.me.start_count
-  source   = "registry.coder.com/coder/code-server/coder"
-  version  = "1.4.2"
-  agent_id = coder_agent.dev.id
-  additional_args = "--disable-workspace-trust"
-}
-
 module "vscode-web" {
   count          = data.coder_workspace.me.start_count
   source         = "registry.coder.com/coder/vscode-web/coder"
   version        = "1.4.3"
   agent_id       = coder_agent.dev.id
   accept_license = true
+  subdomain = false
   folder         = "/home/${local.linux_user}"
-}
-
-module "claude-code" {
-  count                   = data.coder_workspace.me.start_count
-  source                  = "registry.coder.com/coder/claude-code/coder"
-  version                 = "4.4.1"
-  agent_id                = coder_agent.dev.id  
 }
