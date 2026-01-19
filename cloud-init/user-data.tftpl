@@ -42,15 +42,6 @@ write_files:
     permissions: "0644"
     owner: root:root
     content: |
-      export http_proxy="http://root:admin@192.168.50.142:7890"
-      export https_proxy="http://root:admin@192.168.50.142:7890"
-      export all_proxy="socks5://root:admin@192.168.50.142:7891"
-      export HTTP_PROXY="http://root:admin@192.168.50.142:7890"
-      export HTTPS_PROXY="http://root:admin@192.168.50.142:7890"
-      export ALL_PROXY="socks5://root:admin@192.168.50.142:7891"
-      export NO_PROXY="localhost,127.0.0.1,::1"
-      export no_proxy="localhost,127.0.0.1,::1"
-
       alias proxy='export \
       http_proxy="http://root:admin@192.168.50.142:7890" \
       https_proxy="http://root:admin@192.168.50.142:7890" \
@@ -62,19 +53,6 @@ write_files:
       no_proxy="localhost,127.0.0.1,::1"'
 
       alias unproxy='unset http_proxy https_proxy all_proxy HTTP_PROXY HTTPS_PROXY ALL_PROXY NO_PROXY no_proxy'
-
-  - path: /etc/environment.d/99-proxy.conf
-    permissions: "0644"
-    owner: root:root
-    content: |
-      http_proxy="http://root:admin@192.168.50.142:7890"
-      https_proxy="http://root:admin@192.168.50.142:7890"
-      all_proxy="socks5://root:admin@192.168.50.142:7891"
-      HTTP_PROXY="http://root:admin@192.168.50.142:7890"
-      HTTPS_PROXY="http://root:admin@192.168.50.142:7890"
-      ALL_PROXY="socks5://root:admin@192.168.50.142:7891"
-      NO_PROXY="localhost,127.0.0.1,::1"
-      no_proxy="localhost,127.0.0.1,::1"
 
 runcmd:
   - systemctl daemon-reload
