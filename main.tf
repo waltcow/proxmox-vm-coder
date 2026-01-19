@@ -94,6 +94,12 @@ variable "clone_template_vmid" {
   type        = number
 }
 
+variable "code_server_download_url" {
+  description = "code-server tar.gz 下载地址（HTTP/HTTPS）"
+  type        = string
+  default     = ""
+}
+
 data "coder_workspace" "me" {}
 data "coder_workspace_owner" "me" {}
 
@@ -177,8 +183,8 @@ locals {
   linux_user       = contains(["root", "admin", "daemon", "bin", "sys"], local.base_user) ? "${local.base_user}1" : local.base_user # 避免与系统用户冲突
 
   rendered_user_data = templatefile("${path.module}/cloud-init/user-data.tftpl", {
-    coder_token           = coder_agent.dev.token
-    coder_init_script_b64 = base64encode(coder_agent.dev.init_script)
+    coder_token           = coder_agent.main.token
+    coder_init_script_b64 = base64encode(coder_agent.main.init_script)
     hostname              = local.vm_name
     linux_user            = local.linux_user
   })
@@ -268,12 +274,17 @@ resource "proxmox_virtual_environment_vm" "workspace" {
   depends_on = [proxmox_virtual_environment_file.cloud_init_user_data]
 }
 
-module "vscode-web" {
-  count          = data.coder_workspace.me.start_count
-  source         = "registry.coder.com/coder/vscode-web/coder"
-  version        = "1.4.3"
-  agent_id       = coder_agent.dev.id
-  accept_license = true
-  subdomain = false
-  folder         = "/home/${local.linux_user}"
+module "code-server" {
+  count           = data.coder_workspace.me.start_count
+  source          = "./modules/code-server"
+  agent_id        = coder_agent.main.id
+  additional_args = "--disable-workspace-trust"
+  download_url       = var.code_server_download_url
+}
+
+module "git-config" {
+  count    = data.coder_workspace.me.start_count
+  source   = "registry.coder.com/coder/git-config/coder"
+  version  = "1.0.32"
+  agent_id = coder_agent.main.id
 }
