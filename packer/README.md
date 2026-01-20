@@ -7,7 +7,7 @@
 该 Packer 配置从 Ubuntu 24.04 ISO 构建一个预配置的 Proxmox VM 模板，包含：
 
 - **清华大学镜像源**：替换默认的 Ubuntu 镜像源
-- **预装软件包**：curl, ca-certificates, git, proxychains4, jq
+- **预装软件包**：curl, ca-certificates, git, jq
 - **优化的 cloud-init 配置**：使用 Proxmox datasource
 - **系统优化**：禁用自动更新，配置 QEMU Guest Agent
 
@@ -145,7 +145,6 @@ sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
     curl \
     ca-certificates \
     git \
-    proxychains4 \
     jq \
     你的新软件包
 ```
@@ -193,7 +192,7 @@ ssh testuser@<vm-ip>
 cat /etc/apt/sources.list
 
 # 验证预装软件包
-dpkg -l | grep -E 'curl|git|jq|proxychains4'
+dpkg -l | grep -E 'curl|git|jq'
 
 # 验证启动时间
 systemd-analyze

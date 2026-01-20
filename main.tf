@@ -132,7 +132,17 @@ data "coder_parameter" "disk_size_gb" {
   }
 }
 
-resource "coder_agent" "dev" {
+data "coder_parameter" "git_repo" {
+  name         = "git_repo"
+  display_name = "Git repository"
+  default      = "https://github.com/polpo-space/wownow-mobile"
+}
+
+data "coder_external_auth" "github" {
+  id = "github"
+}
+
+resource "coder_agent" "main" {
   arch = "amd64"
   os   = "linux"
 
@@ -269,9 +279,17 @@ resource "proxmox_virtual_environment_vm" "workspace" {
     }
   }
 
-  tags = ["coder", "workspace", local.vm_name]
+  tags = ["coder", local.vm_name]
 
   depends_on = [proxmox_virtual_environment_file.cloud_init_user_data]
+}
+
+module "git-clone" {
+  count       = data.coder_workspace.me.start_count
+  source      = "registry.coder.com/coder/git-clone/coder"
+  version     = "1.2.3"
+  agent_id    = coder_agent.main.id
+  url      = data.coder_parameter.git_repo.value  
 }
 
 module "code-server" {
@@ -279,7 +297,8 @@ module "code-server" {
   source          = "./modules/code-server"
   agent_id        = coder_agent.main.id
   additional_args = "--disable-workspace-trust"
-  download_url       = var.code_server_download_url
+  download_url       = var.code_server_download_url  
+  folder   = "/home/${local.linux_user}/${module.git-clone[count.index].folder_name}"
 }
 
 module "git-config" {

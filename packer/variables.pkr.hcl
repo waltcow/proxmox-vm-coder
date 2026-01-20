@@ -63,7 +63,7 @@ variable "template_name" {
 variable "template_description" {
   type        = string
   description = "模板描述"
-  default     = "Ubuntu 24.04 template with Tsinghua mirrors and pre-installed tools (curl, git, jq, proxychains4) for Coder"
+  default     = "Ubuntu 24.04 template with Tsinghua mirrors and pre-installed tools (curl, git, jq) for Coder"
 }
 
 # ============================================

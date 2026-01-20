@@ -44,8 +44,7 @@ sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
     curl \
     ca-certificates \
     git \
-    net-tools \
-    proxychains4 \
+    net-tools 、    
     jq \
     wget \
     apt-transport-https \
@@ -65,6 +64,21 @@ if curl -fsSL https://deb.nodesource.com/setup_24.x | sudo -E bash -; then
         node -v
         npm -v
         echo "✓ Node.js installed via NodeSource APT"
+        
+        # 配置 npm 镜像源
+        echo ""
+        echo "==> Configuring npm registry mirror..."
+        sudo npm config set registry https://registry.npmmirror.com
+        echo "✓ npm registry configured"
+        
+        # 安装全局 npm 包
+        echo ""
+        echo "==> Installing global npm packages..."
+        sudo npm install -g opencode-ai
+        sudo npm install -g @anthropic-ai/claude-code
+        sudo npm install -g @google/gemini-cli
+        sudo npm install -g @openai/codex
+        echo "✓ Global npm packages installed"
     else
         echo "⚠️ Node.js install skipped (apt failure)"
     fi
@@ -96,30 +110,7 @@ else
 fi
 
 # ============================================
-# 6. 配置 proxychains4
-# ============================================
-echo ""
-echo "==> Configuring proxychains4..."
-
-sudo tee /etc/proxychains4.conf > /dev/null <<'EOF'
-# Proxychains 配置文件
-# 用户可以后续根据需要修改代理设置
-
-strict_chain
-proxy_dns
-remote_dns_subnet 224
-tcp_read_time_out 15000
-tcp_connect_time_out 8000
-
-[ProxyList]
-# 默认使用 socks5 代理（含用户名/密码）
-socks5 192.168.50.142 7891 root admin
-EOF
-
-echo "✓ Proxychains4 configured"
-
-# ============================================
-# 7. 禁用自动更新（模板中不需要）
+# 6. 禁用自动更新（模板中不需要）
 # ============================================
 echo ""
 echo "==> Disabling automatic updates..."
@@ -132,7 +123,7 @@ sudo systemctl mask apt-daily-upgrade.service 2>/dev/null || true
 echo "✓ Automatic updates disabled"
 
 # ============================================
-# 8. 确保 qemu-guest-agent 已启用
+# 7. 确保 qemu-guest-agent 已启用
 # ============================================
 echo ""
 echo "==> Ensuring qemu-guest-agent is enabled..."
@@ -143,7 +134,7 @@ sudo systemctl start qemu-guest-agent
 echo "✓ QEMU Guest Agent enabled"
 
 # ============================================
-# 9. 配置 cloud-init
+# 8. 配置 cloud-init
 # ============================================
 echo ""
 echo "==> Configuring cloud-init datasource priority..."
@@ -156,7 +147,7 @@ EOF
 echo "✓ Cloud-init configured"
 
 # ============================================
-# 10. 禁用 cloud-init 网络等待超时
+# 9. 禁用 cloud-init 网络等待超时
 # ============================================
 echo ""
 echo "==> Configuring systemd network wait timeout..."
@@ -171,7 +162,7 @@ EOF
 echo "✓ Network wait timeout configured"
 
 # ============================================
-# 11. 写入模板构建时间
+# 10. 写入模板构建时间
 # ============================================
 echo ""
 echo "==> Writing template build metadata..."

@@ -153,6 +153,39 @@ coder templates push --yes proxmox-cloudinit --directory . | cat
 
 在 Coder UI 中从此模板创建工作空间。首次启动通常需要 60–120 秒以运行 cloud‑init。
 
+## Terraform Init 加速方案配置
+
+当遇到 `terraform init` 因网络延迟导致 Provider 下载超时，可配置阿里云镜像站加速。Terraform CLI 自 0.13.2 起支持网络镜像。
+
+创建 Terraform CLI 配置文件：
+
+- Windows：`terraform.rc` 放在 `%APPDATA%` 目录（PowerShell 用 `$env:APPDATA` 查看）
+- 其他系统：`~/.terraformrc`（或通过 `TF_CLI_CONFIG_FILE` 指定，文件名需匹配 `*.tfrc`）
+
+示例（macOS/Linux）：
+
+```hcl
+provider_installation {
+  network_mirror {
+    url = "https://mirrors.aliyun.com/terraform/"
+    # 仅将阿里云相关 Provider 走国内镜像
+    include = [
+      "registry.terraform.io/aliyun/alicloud",
+      "registry.terraform.io/hashicorp/alicloud",
+    ]
+  }
+  direct {
+    # 其他 Provider 保持默认下载链路
+    exclude = [
+      "registry.terraform.io/aliyun/alicloud",
+      "registry.terraform.io/hashicorp/alicloud",
+    ]
+  }
+}
+```
+
+验证：在 Terraform 模板目录执行 `terraform init`，若初始化成功并正常下载 Provider，则配置生效。
+
 ## 工作原理
 
 - 通过提供商的 `proxmox_virtual_environment_file` 将渲染后的 cloud‑init user‑data 上传到 `<storage>:snippets/<vm>.yml`

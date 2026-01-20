@@ -19,7 +19,7 @@ network_bridge   = "vmbr0"
 # 模板 ID 与 Terraform 的 clone_template_vmid 保持一致
 template_id          = 999
 template_name        = "ubuntu-2404-coder-template"
-template_description = "Ubuntu 24.04 with Tsinghua mirrors and pre-installed tools (curl, git, jq, proxychains4) for Coder workspaces"
+template_description = "Ubuntu 24.04 with Tsinghua mirrors and pre-installed tools (curl, git, jq) for Coder workspaces"
 
 # ============================================
 # VM 硬件配置
