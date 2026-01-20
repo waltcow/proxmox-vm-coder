@@ -138,8 +138,10 @@ data "coder_parameter" "git_repo" {
   default      = "https://github.com/polpo-space/wownow-mobile"
 }
 
+# GitHub 外部认证（用于私有仓库访问）
+# 需要在 Coder 部署中配置: CODER_EXTERNAL_AUTH_0_ID="github"
 data "coder_external_auth" "github" {
-  id = "github"
+  id       = "github"  
 }
 
 resource "coder_agent" "main" {
@@ -151,10 +153,16 @@ resource "coder_agent" "main" {
     GIT_AUTHOR_EMAIL = data.coder_workspace_owner.me.email
   }
 
-  startup_script_behavior = "non-blocking"
+  startup_script_behavior = "blocking"
   startup_script          = <<-EOT
     set -e
-    # 在此处添加任何启动脚本
+    # 启动时优先切换默认路由，保证后续网络访问走旁路由
+    if [ -x "/usr/local/sbin/route-switch.sh" ]; then
+      sudo "/usr/local/sbin/route-switch.sh" to-bypass
+      echo "route-switch.sh found, switch default route to-bypass"    
+    else
+      echo "route-switch.sh not found, skip route switch"
+    fi
   EOT
 
   metadata {
@@ -284,12 +292,18 @@ resource "proxmox_virtual_environment_vm" "workspace" {
   depends_on = [proxmox_virtual_environment_file.cloud_init_user_data]
 }
 
+
+module "git-config" {
+  count    = data.coder_workspace.me.start_count
+  source   = "./modules/git-config"  
+  agent_id = coder_agent.main.id
+}
+
 module "git-clone" {
-  count       = data.coder_workspace.me.start_count
-  source      = "registry.coder.com/coder/git-clone/coder"
-  version     = "1.2.3"
+  source      = "./modules/git-clone"
+  count       = data.coder_workspace.me.start_count  
   agent_id    = coder_agent.main.id
-  url      = data.coder_parameter.git_repo.value  
+  url         = data.coder_parameter.git_repo.value
 }
 
 module "code-server" {
@@ -299,11 +313,4 @@ module "code-server" {
   additional_args = "--disable-workspace-trust"
   download_url       = var.code_server_download_url  
   folder   = "/home/${local.linux_user}/${module.git-clone[count.index].folder_name}"
-}
-
-module "git-config" {
-  count    = data.coder_workspace.me.start_count
-  source   = "registry.coder.com/coder/git-config/coder"
-  version  = "1.0.32"
-  agent_id = coder_agent.main.id
 }

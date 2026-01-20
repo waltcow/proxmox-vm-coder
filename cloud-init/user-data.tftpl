@@ -37,7 +37,101 @@ write_files:
 
       [Install]
       WantedBy=multi-user.target
-      
+
+  - path: /usr/local/sbin/route-switch.sh
+    permissions: "0755"
+    owner: root:root
+    content: |
+      #!/usr/bin/env bash
+      set -euo pipefail
+
+      IFACE="$${IFACE:-eth0}"
+      MAIN_GW="$${MAIN_GW:-192.168.50.254}"
+      BYPASS_GW="$${BYPASS_GW:-192.168.50.142}"
+
+      # 旁路由作为 DNS（必须旁路由上有 DNS 转发/AdGuard/SmartDNS 等）
+      BYPASS_DNS="$${BYPASS_DNS:-192.168.50.142}"
+
+      # 切回主路由时用的 DNS：可填主路由/运营商DNS/公共DNS（按需改）
+      MAIN_DNS1="$${MAIN_DNS1:-223.5.5.5}"
+      MAIN_DNS2="$${MAIN_DNS2:-114.114.114.114}"
+
+      # 内网网段固定走主路由（包含 VLAN10）
+      LAN_CIDRS=(
+        "192.168.50.0/24"
+        "192.168.10.0/24"
+      )
+
+      need_root(){ [[ "$${EUID}" -eq 0 ]] || { echo "run: sudo $0 ..."; exit 1; }; }
+
+      have_resolvectl(){ command -v resolvectl >/dev/null 2>&1; }
+
+      set_dns_resolved() {
+        local dns1="$1"; local dns2="$${2:-}"
+        # 为了让 DNS 查询走这个接口
+        resolvectl dns "$${IFACE}" $${dns1} $${dns2}
+        resolvectl domain "$${IFACE}" '~.'
+      }
+
+      set_dns_resolvconf() {
+        local dns1="$1"; local dns2="$${2:-}"
+        # 直接写 resolv.conf（可能会被 DHCP/NetworkManager 覆盖）
+        {
+          echo "nameserver $${dns1}"
+          [[ -n "$${dns2}" ]] && echo "nameserver $${dns2}"
+        } > /etc/resolv.conf
+      }
+
+      set_dns() {
+        local dns1="$1"; local dns2="$${2:-}"
+        if have_resolvectl; then
+          set_dns_resolved "$${dns1}" "$${dns2}"
+        else
+          set_dns_resolvconf "$${dns1}" "$${dns2}"
+        fi
+      }
+
+      ensure_lan_routes_via_main() {
+        for cidr in "$${LAN_CIDRS[@]}"; do
+          ip -4 route replace "$${cidr}" via "$${MAIN_GW}" dev "$${IFACE}" metric 50
+        done
+      }
+
+      # 删除 DHCP 可能加的“固定 DNS IP 走主路由”的 host route，避免压过 default
+      clear_dns_host_routes() {
+        ip -4 route del 114.114.114.114 2>/dev/null || true
+        ip -4 route del 223.5.5.5 2>/dev/null || true
+      }
+
+      to_bypass() {
+        ip -4 route replace default via "$${BYPASS_GW}" dev "$${IFACE}" metric 100
+        ensure_lan_routes_via_main
+        clear_dns_host_routes
+        set_dns "$${BYPASS_DNS}"
+        echo "OK: default->$${BYPASS_GW}, dns->$${BYPASS_DNS}"
+      }
+
+      to_main() {
+        ip -4 route replace default via "$${MAIN_GW}" dev "$${IFACE}" metric 100
+        ensure_lan_routes_via_main
+        # 切回主路由时可以恢复公共 DNS（或改成你主路由DNS）
+        set_dns "$${MAIN_DNS1}" "$${MAIN_DNS2}"
+        echo "OK: default->$${MAIN_GW}, dns->$${MAIN_DNS1} $${MAIN_DNS2}"
+      }
+
+      case "$${1:-}" in
+        to-bypass) need_root; to_bypass ;;
+        to-main)   need_root; to_main ;;
+        status)
+          ip -4 route show default dev "$${IFACE}" || true
+          if have_resolvectl; then resolvectl status "$${IFACE}" | sed -n '1,120p'; else cat /etc/resolv.conf; fi
+          ;;
+        *)
+          echo "Usage: sudo $0 {to-bypass|to-main|status}"
+          exit 1
+          ;;
+      esac
+
 runcmd:
   - systemctl daemon-reload
   - systemctl enable --now coder-agent.service

@@ -153,6 +153,18 @@ coder templates push --yes proxmox-cloudinit --directory . | cat
 
 在 Coder UI 中从此模板创建工作空间。首次启动通常需要 60–120 秒以运行 cloud‑init。
 
+## 旁路由切换脚本
+
+模板会在工作空间中安装路由切换脚本：`/usr/local/sbin/route-switch.sh`。可通过环境变量覆盖默认网关、DNS、网卡等参数。
+
+示例：
+
+```bash
+sudo /usr/local/sbin/route-switch.sh status
+sudo /usr/local/sbin/route-switch.sh to-bypass
+sudo /usr/local/sbin/route-switch.sh to-main
+```
+
 ## Terraform Init 加速方案配置
 
 当遇到 `terraform init` 因网络延迟导致 Provider 下载超时，可配置阿里云镜像站加速。Terraform CLI 自 0.13.2 起支持网络镜像。
