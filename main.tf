@@ -138,6 +138,12 @@ data "coder_parameter" "git_repo" {
   default      = "https://github.com/polpo-space/wownow-mobile"
 }
 
+data "coder_parameter" "code_server_share" {
+  name         = "code_server_share"  
+  display_name = "code-server 访问范围, owner/authenticated/public"
+  default      = "authenticated"
+}
+
 # GitHub 外部认证（用于私有仓库访问）
 # 需要在 Coder 部署中配置: CODER_EXTERNAL_AUTH_0_ID="github"
 data "coder_external_auth" "github" {
@@ -159,9 +165,9 @@ resource "coder_agent" "main" {
     # 启动时优先切换默认路由，保证后续网络访问走旁路由
     if [ -x "/usr/local/sbin/route-switch.sh" ]; then
       sudo "/usr/local/sbin/route-switch.sh" to-bypass
-      echo "route-switch.sh found, switch default route to-bypass"    
+      echo "切换默认路由到旁路由"    
     else
-      echo "route-switch.sh not found, skip route switch"
+      echo "未找到路由切换脚本，跳过路由切换"
     fi
   EOT
 
@@ -309,8 +315,10 @@ module "git-clone" {
 module "code-server" {
   count           = data.coder_workspace.me.start_count
   source          = "./modules/code-server"
+  share           = data.coder_parameter.code_server_share.value
+  subdomain       = true
   agent_id        = coder_agent.main.id
   additional_args = "--disable-workspace-trust"
-  download_url       = var.code_server_download_url  
-  folder   = "/home/${local.linux_user}/${module.git-clone[count.index].folder_name}"
+  download_url    = var.code_server_download_url
+  folder          = "/home/${local.linux_user}/${module.git-clone[count.index].folder_name}"  
 }
