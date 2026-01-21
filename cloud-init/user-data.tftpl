@@ -133,6 +133,9 @@ write_files:
       esac
 
 runcmd:
+  - mkdir -p "/share"
+  - mount -t nfs "192.168.50.60:/share" "/share"
+  - printf '%s\n' "192.168.50.60:/share /share nfs defaults,_netdev 0 0" >> "/etc/fstab"
   - systemctl daemon-reload
   - systemctl enable --now coder-agent.service
 

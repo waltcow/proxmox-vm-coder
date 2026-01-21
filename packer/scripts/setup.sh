@@ -44,12 +44,13 @@ sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
     curl \
     ca-certificates \
     git \
-    net-tools 、    
+    net-tools \
     jq \
     wget \
     apt-transport-https \
     gnupg \
-    software-properties-common
+    software-properties-common \
+    nfs-common
 
 echo "✓ Required packages installed"
 
@@ -70,6 +71,13 @@ if curl -fsSL https://deb.nodesource.com/setup_24.x | sudo -E bash -; then
         echo "==> Configuring npm registry mirror..."
         sudo npm config set registry https://registry.npmmirror.com
         echo "✓ npm registry configured"
+
+        #isntall pnpm
+        echo ""
+        echo "==> Installing pnpm..."
+        sudo npm install -g pnpm@latest-10
+        pnpm -v        
+        echo "✓ pnpm installed"
         
         # 安装全局 npm 包
         echo ""

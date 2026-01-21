@@ -94,12 +94,6 @@ variable "clone_template_vmid" {
   type        = number
 }
 
-variable "code_server_download_url" {
-  description = "code-server tar.gz 下载地址（HTTP/HTTPS）"
-  type        = string
-  default     = ""
-}
-
 data "coder_workspace" "me" {}
 data "coder_workspace_owner" "me" {}
 
@@ -138,9 +132,9 @@ data "coder_parameter" "git_repo" {
   default      = "https://github.com/polpo-space/wownow-mobile"
 }
 
-data "coder_parameter" "code_server_share" {
-  name         = "code_server_share"  
-  display_name = "code-server 访问范围, owner/authenticated/public"
+data "coder_parameter" "vscode_web_share" {
+  name         = "vscode_web_share"
+  display_name = "vscode-web 访问范围, owner/authenticated/public"
   default      = "authenticated"
 }
 
@@ -312,13 +306,21 @@ module "git-clone" {
   url         = data.coder_parameter.git_repo.value
 }
 
-module "code-server" {
-  count           = data.coder_workspace.me.start_count
-  source          = "./modules/code-server"
-  share           = data.coder_parameter.code_server_share.value
-  subdomain       = true
-  agent_id        = coder_agent.main.id
-  additional_args = "--disable-workspace-trust"
-  download_url    = var.code_server_download_url
-  folder          = "/home/${local.linux_user}/${module.git-clone[count.index].folder_name}"  
+module "vscode-desktop" {
+  count    = data.coder_workspace.me.start_count
+  source   = "./modules/vscode-desktop"
+  agent_id = coder_agent.main.id
+  folder   = "/home/${local.linux_user}/${module.git-clone[count.index].folder_name}"
+}
+
+module "vscode-web" {
+  count          = data.coder_workspace.me.start_count
+  source         = "./modules/vscode-web"
+  agent_id       = coder_agent.main.id
+  share          = data.coder_parameter.vscode_web_share.value
+  accept_license = true
+  disable_trust  = true
+  subdomain      = true
+  folder         = "/home/${local.linux_user}/${module.git-clone[count.index].folder_name}"
+  commit_id      = "d037ac076cee195194f93ce6fe2bdfe2969cc82d"  # VS Code 1.96.2 (stable)
 }
