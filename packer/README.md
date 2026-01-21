@@ -76,19 +76,19 @@ source .env
 ### 3. 初始化 Packer
 
 ```bash
-packer init ubuntu-24.04.pkr.hcl
+packer init .
 ```
 
 ### 4. 验证配置
 
 ```bash
-packer validate -var-file="config.pkrvars.hcl" ubuntu-24.04.pkr.hcl
+packer validate -var-file="config.pkrvars.hcl" .
 ```
 
 ### 5. 构建模板
 
 ```bash
-packer build -var-file="config.pkrvars.hcl" ubuntu-24.04.pkr.hcl
+packer build -var-file="config.pkrvars.hcl" .
 ```
 
 构建过程预计需要 **15-20 分钟**。
@@ -318,6 +318,26 @@ sudo systemctl enable docker
 late-commands:
   - curtin in-target --target=/target -- your-custom-command
 ```
+
+## 网络配置重启说明
+
+### 重启 vmbr0 网桥
+
+在修改网络配置后，需要重启 vmbr0 网桥以使配置生效。请在 Proxmox 节点上选择以下任一方法执行：
+
+#### 方法 1：使用 ifupdown2（推荐）
+
+安全的重启 vmbr0 方法，请你在 Proxmox 节点上执行（任选其一）：
+
+方法 1（推荐，ifupdown2）：
+
+ifreload -a
+方法 2（指定网桥）：
+
+ifdown vmbr0 && ifup vmbr0
+执行后请立即在安装器里再跑一次 DHCP：
+
+busybox udhcpc -i ens18
 
 ## 构建过程详解
 
