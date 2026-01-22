@@ -146,6 +146,44 @@ pveum user token add terraform@pve terraform --privsep 0
 
 ## 使用
 
+### 预缓存 VS Code（推荐）
+
+为了加速 VS Code 启动并避免网络下载阻塞，建议预先缓存 VS Code：
+
+```bash
+# 缓存 VS Code Server（用于 VS Code Desktop 远程连接）
+sudo ./cache-vscode-server.sh
+
+# 缓存 VS Code Web（用于浏览器访问）
+sudo ./cache-vscode.sh
+```
+
+这将把 VS Code 下载到 NFS share (`/share/vscode-cache/`)，新建的 workspace 会自动使用缓存。
+
+**解决 VS Code Desktop 下载阻塞问题：**
+- VS Code Desktop 通过 SSH 连接时需要在远程主机下载 VS Code Server
+- 如果网络不稳定或有代理/路由切换，可能导致下载阻塞
+- 预缓存可以完全避免从互联网下载，实现秒开
+
+### 路由切换说明
+
+workspace 启动后默认使用主路由。如需切换到旁路由：
+
+```bash
+# 切换到旁路由（用于科学上网等）
+sudo /usr/local/sbin/route-switch.sh to-bypass
+
+# 切换回主路由
+sudo /usr/local/sbin/route-switch.sh to-main
+
+# 查看当前路由状态
+sudo /usr/local/sbin/route-switch.sh status
+```
+
+> ⚠️ **注意**：启动脚本中不再自动切换路由，避免阻塞 VS Code Server 下载。等 workspace 完全启动后再根据需要手动切换。
+
+### 部署 workspace
+
 ```bash
 # 在此目录下执行
 coder templates push --yes proxmox-cloudinit --directory . | cat

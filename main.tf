@@ -156,13 +156,17 @@ resource "coder_agent" "main" {
   startup_script_behavior = "blocking"
   startup_script          = <<-EOT
     set -e
-    # 启动时优先切换默认路由，保证后续网络访问走旁路由
+    
+    # 切换到旁路由以便 git clone 使用代理
+    echo "切换到旁路由..."
     if [ -x "/usr/local/sbin/route-switch.sh" ]; then
       sudo "/usr/local/sbin/route-switch.sh" to-bypass
-      echo "切换默认路由到旁路由"    
+      echo "✅ 已切换到旁路由"
     else
-      echo "未找到路由切换脚本，跳过路由切换"
+      echo "⚠️  未找到路由切换脚本，继续使用主路由"
     fi
+    
+    echo "Workspace ready for git clone"
   EOT
 
   metadata {
@@ -292,7 +296,6 @@ resource "proxmox_virtual_environment_vm" "workspace" {
   depends_on = [proxmox_virtual_environment_file.cloud_init_user_data]
 }
 
-
 module "git-config" {
   count    = data.coder_workspace.me.start_count
   source   = "./modules/git-config"  
@@ -322,5 +325,6 @@ module "vscode-web" {
   disable_trust  = true
   subdomain      = true
   folder         = "/home/${local.linux_user}/${module.git-clone[count.index].folder_name}"
-  commit_id      = "d037ac076cee195194f93ce6fe2bdfe2969cc82d"  # VS Code 1.96.2 (stable)
+  use_cached     = true  # 优先使用缓存的 VS Code
+  commit_id      = "585eba7c0c34fd6b30faac7c62a42050bfbc0086"  # VS Code latest stable (fallback)
 }

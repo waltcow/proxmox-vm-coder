@@ -50,3 +50,13 @@ packer/*.pkrvars.hcl
 packer/*.auto.pkrvars.hcl
 packer/crash.log
 packer/.env
+
+
+packer-next_cache/
+packer-next/packer-next_cache/
+packer-next/output-*/
+packer-next/*.pkrvars.hcl
+!packer-next/config.pkrvars.hcl
+packer-next/*.auto.pkrvars.hcl
+packer-next/crash.log
+packer-next/.env

@@ -1,17 +1,22 @@
+
 # Packer 主构建配置文件
-# 用于从 Ubuntu 24.04 ISO 构建 Proxmox VM 模板
+# 使用 Ubuntu 24.04 Cloud Image 构建 Proxmox VM 模板
+# 比 ISO 安装方式快得多（约 2-5 分钟 vs 15-30 分钟）
 
 packer {
   required_version = ">= 1.9.0"
   required_plugins {
     proxmox = {
-      version = ">= 1.1.8"
+      version = ">= 1.2.2"
       source  = "github.com/hashicorp/proxmox"
     }
   }
 }
 
-source "proxmox-iso" "ubuntu2404" {
+# ============================================
+# 使用 proxmox-clone 从已导入的 cloud image 克隆
+# ============================================
+source "proxmox-clone" "ubuntu2404-cloud" {
   # ============================================
   # Proxmox 连接配置
   # ============================================
@@ -22,21 +27,18 @@ source "proxmox-iso" "ubuntu2404" {
   node                     = var.proxmox_node
 
   # ============================================
-  # VM 基础配置
+  # 克隆配置
+  # ============================================
+  # 克隆已导入的 cloud image 基础模板
+  clone_vm   = var.cloud_image_template_name
+  full_clone = true
+
+  # ============================================
+  # VM 配置
   # ============================================
   vm_id                = var.template_id
   vm_name              = var.template_name
   template_description = var.template_description
-
-  # ============================================
-  # ISO 配置
-  # ============================================
-  boot_iso {
-    type         = "scsi"
-    iso_file     = "${var.iso_storage_pool}:iso/${var.iso_file}"
-    iso_checksum = var.iso_checksum
-    unmount      = true
-  }
 
   # ============================================
   # 硬件配置
@@ -44,20 +46,6 @@ source "proxmox-iso" "ubuntu2404" {
   cores  = var.cpu_cores
   memory = var.memory
   os     = "l26" # Linux Kernel 2.6+
-
-  # ============================================
-  # 存储配置
-  # ============================================
-  scsi_controller = "virtio-scsi-single"
-
-  disks {
-    type         = "scsi"
-    disk_size    = var.disk_size
-    storage_pool = var.storage_pool
-    format       = "raw"
-    cache_mode   = "writeback"
-    io_thread    = true
-  }
 
   # ============================================
   # 网络配置
@@ -74,55 +62,25 @@ source "proxmox-iso" "ubuntu2404" {
   cloud_init              = true
   cloud_init_storage_pool = var.storage_pool
 
-  # VGA 和串口配置（cloud-init 需要）
+  # VGA 配置
   vga {
-    type = "std"  # 使用标准 VGA，noVNC 可以看到输出
+    type = "std"
   }
-
-  serials = ["socket"]
 
   # QEMU Guest Agent
   qemu_agent = true
 
   # ============================================
-  # Boot 配置
-  # ============================================
-  boot_wait = "10s"
-
-  # Boot command（使用编辑模式，比 GRUB 命令行更可靠）
-  boot_command = [
-    "<esc><wait>",
-    "e<wait>",
-    "<down><down><down><end>",
-    "<bs><bs><bs><bs><wait>",
-    "autoinstall ds=nocloud-net\\;s=http://{{ .HTTPIP }}:{{ .HTTPPort }}/ ---",
-    "<f10><wait>"
-  ]
-
-  # ============================================
-  # HTTP 服务器配置（提供 autoinstall 配置）
-  # ============================================
-  # 使用 http_content 块动态生成 user-data（支持模板变量）
-  http_content = {
-    "/user-data" = templatefile("${path.root}/http/user-data.pkrtpl.hcl", {
-      ssh_username = var.ssh_username
-      ssh_password = var.ssh_password
-    })
-    "/meta-data" = file("${path.root}/http/meta-data")
-  }
-
-  http_bind_address = "0.0.0.0"
-  http_port_min     = 8802
-  http_port_max     = 8802
-
-  # ============================================
   # SSH 配置
   # ============================================
-  ssh_username           = var.ssh_username
-  ssh_password           = var.ssh_password
-  ssh_timeout            = var.ssh_timeout
-  ssh_handshake_attempts = 50
-  ssh_pty                = true
+  ssh_username         = var.ssh_username
+  ssh_private_key_file = var.ssh_private_key_file
+  ssh_timeout          = var.ssh_timeout
+  ssh_host             = "192.168.50.250"
+  
+  # 使用 QEMU Guest Agent 获取 IP（需要 agent 启动后才能连接）
+  # 或者可以通过 cloud-init 配置固定 IP
+  ssh_agent_auth = false
 
   # ============================================
   # 模板配置
@@ -132,7 +90,7 @@ source "proxmox-iso" "ubuntu2404" {
 }
 
 build {
-  sources = ["source.proxmox-iso.ubuntu2404"]
+  sources = ["source.proxmox-clone.ubuntu2404-cloud"]
 
   # ============================================
   # Provisioner 1: 等待 cloud-init 完成
@@ -142,7 +100,7 @@ build {
       "echo '==> Waiting for cloud-init to complete...'",
       "sudo cloud-init status || true",
       "sudo cloud-init status --wait || true",
-      "echo '==> Cloud-init completed or is disabled'"
+      "echo '==> Cloud-init completed'"
     ]
   }
 
@@ -181,7 +139,7 @@ build {
   }
 
   # ============================================
-  # Provisioner 5: 清理系统
+  # Provisioner 6: 清理系统
   # ============================================
   provisioner "shell" {
     script = "scripts/cleanup.sh"

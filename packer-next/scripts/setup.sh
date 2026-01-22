@@ -16,12 +16,7 @@ echo "==> Switching to bypass router for external network access..."
 
 if [ -f "/tmp/scripts/route-switch.sh" ]; then
     sudo chmod +x /tmp/scripts/route-switch.sh
-    IFACE="$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{for (i=1;i<=NF;i++) if ($i=="dev") {print $(i+1); exit}}')"
-    if [ -n "$IFACE" ]; then
-        sudo IFACE="$IFACE" /tmp/scripts/route-switch.sh to-bypass || echo "⚠️ Route switch failed, continuing anyway..."
-    else
-        echo "⚠️ Could not detect default network interface, skipping route switch"
-    fi
+    sudo /tmp/scripts/route-switch.sh to-bypass || echo "⚠️ Route switch failed, continuing anyway..."
 else
     echo "⚠️ route-switch.sh not found, skipping route switch"
 fi
@@ -201,15 +196,19 @@ sudo systemctl mask apt-daily-upgrade.service 2>/dev/null || true
 echo "✓ Automatic updates disabled"
 
 # ============================================
-# 7. 确保 qemu-guest-agent 已启用
+# 7. 安装并启用 qemu-guest-agent
 # ============================================
 echo ""
-echo "==> Ensuring qemu-guest-agent is enabled..."
+echo "==> Installing and enabling qemu-guest-agent..."
+
+if ! dpkg -l | grep -q qemu-guest-agent; then
+    sudo DEBIAN_FRONTEND=noninteractive apt-get install -y qemu-guest-agent
+fi
 
 sudo systemctl enable qemu-guest-agent
 sudo systemctl start qemu-guest-agent
 
-echo "✓ QEMU Guest Agent enabled"
+echo "✓ QEMU Guest Agent installed and enabled"
 
 # ============================================
 # 8. 配置 cloud-init
@@ -339,6 +338,7 @@ echo "==> Writing template build metadata..."
 BUILD_TIME_UTC="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
 sudo tee /etc/template-build-info > /dev/null <<EOF
 TEMPLATE_BUILD_TIME_UTC=${BUILD_TIME_UTC}
+TEMPLATE_TYPE=cloud-image
 EOF
 
 echo "✓ Template build metadata written: ${BUILD_TIME_UTC}"
@@ -350,12 +350,7 @@ echo ""
 echo "==> Switching back to main router..."
 
 if [ -f "/usr/local/sbin/route-switch.sh" ]; then
-    IFACE="$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{for (i=1;i<=NF;i++) if ($i=="dev") {print $(i+1); exit}}')"
-    if [ -n "$IFACE" ]; then
-        sudo IFACE="$IFACE" /usr/local/sbin/route-switch.sh to-main || echo "⚠️ Route switch back failed"
-    else
-        echo "⚠️ Could not detect default network interface, skipping route switch"
-    fi
+    sudo /usr/local/sbin/route-switch.sh to-main || echo "⚠️ Route switch back failed"
 else
     echo "⚠️ route-switch.sh not installed, skipping route switch"
 fi
