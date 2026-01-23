@@ -122,3 +122,21 @@ variable "ssh_timeout" {
   description = "SSH 连接超时时间"
   default     = "10m"
 }
+
+variable "ssh_host" {
+  type        = string
+  description = "SSH 连接主机 IP（如果无法自动获取）"
+  default     = "192.168.50.250"
+}
+
+variable "vm_os" {
+  type        = string
+  description = "操作系统类型"
+  default     = "l26"
+}
+
+variable "vm_vga_type" {
+  type        = string
+  description = "显卡类型"
+  default     = "std"
+}

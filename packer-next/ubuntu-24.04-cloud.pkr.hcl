@@ -45,7 +45,7 @@ source "proxmox-clone" "ubuntu2404-cloud" {
   # ============================================
   cores  = var.cpu_cores
   memory = var.memory
-  os     = "l26" # Linux Kernel 2.6+
+  os     = var.vm_os # Linux Kernel 2.6+
   scsi_controller = "virtio-scsi-pci"
 
   # ============================================
@@ -65,7 +65,7 @@ source "proxmox-clone" "ubuntu2404-cloud" {
 
   # VGA 配置
   vga {
-    type = "std"
+    type = var.vm_vga_type
   }
 
   # QEMU Guest Agent
@@ -77,7 +77,7 @@ source "proxmox-clone" "ubuntu2404-cloud" {
   ssh_username         = var.ssh_username
   ssh_private_key_file = var.ssh_private_key_file
   ssh_timeout          = var.ssh_timeout
-  ssh_host             = "192.168.50.250"
+  ssh_host             = var.ssh_host
   
   # 使用 QEMU Guest Agent 获取 IP（需要 agent 启动后才能连接）
   # 或者可以通过 cloud-init 配置固定 IP

@@ -94,6 +94,12 @@ variable "clone_template_vmid" {
   type        = number
 }
 
+variable "vscode_commit_id" {
+  description = "VS Code Server 的 commit ID (用于固定版本)"
+  type        = string
+  default     = "585eba7c0c34fd6b30faac7c62a42050bfbc0086"
+}
+
 data "coder_workspace" "me" {}
 data "coder_workspace_owner" "me" {}
 
@@ -129,7 +135,7 @@ data "coder_parameter" "disk_size_gb" {
 data "coder_parameter" "git_repo" {
   name         = "git_repo"
   display_name = "Git repository"
-  default      = "https://github.com/polpo-space/wownow-mobile"
+  default      = ""
 }
 
 data "coder_parameter" "vscode_web_share" {
@@ -326,5 +332,5 @@ module "vscode-web" {
   subdomain      = true
   folder         = "/home/${local.linux_user}/${module.git-clone[count.index].folder_name}"
   use_cached     = true  # 优先使用缓存的 VS Code
-  commit_id      = "585eba7c0c34fd6b30faac7c62a42050bfbc0086"  # VS Code latest stable (fallback)
+  commit_id      = var.vscode_commit_id
 }
