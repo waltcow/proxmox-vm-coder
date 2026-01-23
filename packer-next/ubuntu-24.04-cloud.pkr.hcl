@@ -46,6 +46,7 @@ source "proxmox-clone" "ubuntu2404-cloud" {
   cores  = var.cpu_cores
   memory = var.memory
   os     = "l26" # Linux Kernel 2.6+
+  scsi_controller = "virtio-scsi-pci"
 
   # ============================================
   # 网络配置

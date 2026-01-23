@@ -48,12 +48,44 @@ fi
 # 检查 VM 是否已存在
 # ============================================
 if qm status "${VMID}" &> /dev/null; then
-    echo "警告: VM ${VMID} 已存在"
+    echo "警告: VM ${VMID} 已存在, 是否删除并重新创建[y/N]"
+    
+    # 检查是否为模板
+    if qm config "${VMID}" | grep -q "^template: 1"; then
+        echo "VM ${VMID} 是一个模板"
+    fi
+    
+    # 检查 VM 状态
+    VM_STATUS=$(qm status "${VMID}" | awk '{print $2}')
+    echo "当前状态: ${VM_STATUS}"
+    
     read -p "是否删除并重新创建? [y/N] " -n 1 -r
     echo
     if [[ $REPLY =~ ^[Yy]$ ]]; then
         echo "==> 删除现有 VM ${VMID}..."
-        qm destroy "${VMID}" --purge || true
+        
+        # 如果 VM 正在运行，先停止
+        if [[ "${VM_STATUS}" == "running" ]]; then
+            echo "正在停止 VM ${VMID}..."
+            qm stop "${VMID}"
+            sleep 3
+        fi
+        
+        # 如果是模板，先转换回 VM 再删除
+        if qm config "${VMID}" | grep -q "^template: 1"; then
+            echo "正在将模板转换回 VM..."
+            qm template "${VMID}" --revert 2>/dev/null || true
+            sleep 1
+        fi
+        
+        # 删除 VM
+        qm destroy "${VMID}" --purge || {
+            echo "错误: 删除 VM 失败"
+            exit 1
+        }
+        
+        echo "✓ VM ${VMID} 已删除"
+        sleep 2
     else
         echo "取消操作"
         exit 0
@@ -186,6 +218,23 @@ qm set "${VMID}" --agent enabled=1
 echo ""
 echo "==> 配置 Cloud-Init..."
 
+# 创建自定义 cloud-init vendor 配置文件（配置清华源）
+VENDOR_FILE="/var/lib/vz/snippets/vendor-tuna.yaml"
+cat > "${VENDOR_FILE}" <<'EOF'
+#cloud-config
+apt:
+  primary:
+    - arches: [default]
+      uri: https://mirrors.tuna.tsinghua.edu.cn/ubuntu/
+  security:
+    - arches: [default]
+      uri: https://mirrors.tuna.tsinghua.edu.cn/ubuntu/
+package_upgrade: false
+package_reboot_if_required: false
+EOF
+
+echo "✓ 创建了 cloud-init vendor 配置文件"
+
 # 设置默认用户
 qm set "${VMID}" --ciuser ubuntu
 
@@ -200,14 +249,15 @@ else
     echo "请手动配置 SSH 密钥: qm set ${VMID} --sshkeys /path/to/your/key.pub"
 fi
 
-# 配置 IP（使用 DHCP）
-qm set "${VMID}" --ipconfig0 ip=dhcp
+# 应用自定义 vendor 配置
+qm set "${VMID}" --cicustom "vendor=local:snippets/vendor-tuna.yaml"
+echo "✓ 已应用清华源配置（cloud-init 会自动使用）"
 
-# 为了让 Packer 能连接，我们也设置一个备用的静态 IP 配置
-# 克隆后的 VM 会使用这个作为参考
-echo "提示: 基础模板使用 DHCP，克隆的 VM 也会继承此配置"
+# 配置固定 IP（用于 Packer 构建）
+# 克隆后的 VM 会继承此配置
+qm set "${VMID}" --ipconfig0 ip=192.168.50.250/24,gw=192.168.50.254
 
-echo "✓ VM 配置完成"
+echo "✓ VM 配置完成（使用固定 IP: 192.168.50.250）"
 
 # ============================================
 # 扩展磁盘（可选）
@@ -229,43 +279,66 @@ echo "==> 启动 VM 安装 qemu-guest-agent..."
 qm start "${VMID}"
 
 # 等待 cloud-init 完成和网络就绪
-echo "等待 VM 启动和 cloud-init 初始化（最多 3 分钟）..."
+# 使用固定 IP 192.168.50.250
+VM_IP="192.168.50.250"
+
+echo "等待 VM 启动和网络就绪（最多 3 分钟）..."
+echo "使用固定 IP: ${VM_IP}"
+
 for i in {1..36}; do
     sleep 5
-    # 尝试通过 SSH 连接测试
-    if timeout 5 ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-        -i "${HOME}/.ssh/id_rsa" ubuntu@$(qm guest cmd "${VMID}" network-get-interfaces 2>/dev/null | \
-        jq -r '.[] | select(.name=="eth0") | .["ip-addresses"][] | select(.["ip-address-type"]=="ipv4") | .["ip-address"]' 2>/dev/null | head -1) \
-        "echo 'SSH OK'" 2>/dev/null; then
-        echo "✓ VM SSH 连接成功"
+    # 简单 ping 测试，不触发 cloud-init 下载
+    if ping -c 1 -W 2 "${VM_IP}" >/dev/null 2>&1; then
+        echo "✓ VM 网络已就绪 (${i}次尝试)"
         break
     fi
-    echo "等待中... (${i}/36)"
+    echo "等待网络... (${i}/36)"
 done
 
-# 获取 VM IP
-VM_IP=$(qm guest cmd "${VMID}" network-get-interfaces 2>/dev/null | \
-    jq -r '.[] | select(.name=="eth0") | .["ip-addresses"][] | select(.["ip-address-type"]=="ipv4") | .["ip-address"]' 2>/dev/null | head -1)
+# 额外等待 cloud-init 完成
+echo "等待 cloud-init 完成..."
 
-if [ -z "${VM_IP}" ] || [ "${VM_IP}" == "null" ]; then
-    echo "警告: 无法通过 Guest Agent 获取 IP，尝试从 DHCP lease 获取..."
-    VM_IP=$(grep -r "${VMID}" /var/lib/dhcp/*.leases 2>/dev/null | grep -oP '\d+\.\d+\.\d+\.\d+' | head -1 || echo "")
-fi
-
-if [ -n "${VM_IP}" ] && [ "${VM_IP}" != "null" ]; then
-    echo "VM IP: ${VM_IP}"
-    echo ""
-    echo "==> 安装 qemu-guest-agent..."
-    
-    ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+# 等待 cloud-init 真正完成（检查状态）
+for i in {1..30}; do
+    CLOUD_INIT_STATUS=$(timeout 5 ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
         -i "${HOME}/.ssh/id_rsa" ubuntu@"${VM_IP}" \
-        "sudo apt-get update && sudo apt-get install -y qemu-guest-agent && sudo systemctl enable qemu-guest-agent && sudo systemctl start qemu-guest-agent"
+        "cloud-init status" 2>/dev/null | grep -oP 'status: \K\w+' || echo "")
     
-    echo "✓ qemu-guest-agent 安装完成"
-else
-    echo "警告: 无法获取 VM IP，跳过 agent 安装"
-    echo "您可能需要手动安装: sudo apt-get install -y qemu-guest-agent"
-fi
+    if [ "$CLOUD_INIT_STATUS" = "done" ]; then
+        echo "✓ Cloud-init 已完成"
+        break
+    elif [ "$CLOUD_INIT_STATUS" = "running" ]; then
+        echo "等待 cloud-init... (${i}/30) - status: running"
+    else
+        echo "等待 cloud-init... (${i}/30)"
+    fi
+    sleep 5
+done
+
+# 额外等待 apt 锁释放
+echo "等待 apt 锁释放..."
+for i in {1..10}; do
+    if timeout 5 ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+        -i "${HOME}/.ssh/id_rsa" ubuntu@"${VM_IP}" \
+        "sudo fuser /var/lib/apt/lists/lock >/dev/null 2>&1" 2>/dev/null; then
+        echo "apt 进程仍在运行，等待... (${i}/10)"
+        sleep 3
+    else
+        echo "✓ apt 锁已释放"
+        break
+    fi
+done
+
+echo "VM IP: ${VM_IP}"
+echo ""
+echo "==> 安装 qemu-guest-agent..."
+
+# 清华源已在 cloud-init 时配置，直接安装
+ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+    -i "${HOME}/.ssh/id_rsa" ubuntu@"${VM_IP}" \
+    "sudo apt-get update && sudo apt-get install -y qemu-guest-agent && sudo systemctl enable qemu-guest-agent && sudo systemctl start qemu-guest-agent"
+
+echo "✓ qemu-guest-agent 安装完成"
 
 # 关闭 VM
 echo ""
@@ -274,7 +347,7 @@ qm shutdown "${VMID}"
 sleep 10
 
 # 等待 VM 完全停止
-for i in {1..5}; do
+for i in {1..30}; do
     if qm status "${VMID}" | grep -q "stopped"; then
         echo "✓ VM 已停止"
         break

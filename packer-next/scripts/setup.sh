@@ -27,6 +27,11 @@ fi
 echo ""
 echo "==> Configuring Tsinghua University Ubuntu mirrors..."
 
+# Disable default ubuntu.sources to avoid duplicate entries with /etc/apt/sources.list
+if [ -f "/etc/apt/sources.list.d/ubuntu.sources" ]; then
+    sudo mv /etc/apt/sources.list.d/ubuntu.sources /etc/apt/sources.list.d/ubuntu.sources.disabled
+fi
+
 sudo tee /etc/apt/sources.list > /dev/null <<'EOF'
 # 清华大学开源软件镜像站 - Ubuntu 24.04 (Noble)
 deb https://mirrors.tuna.tsinghua.edu.cn/ubuntu/ noble main restricted universe multiverse
@@ -74,6 +79,7 @@ echo ""
 echo "==> Attempting to mount NFS share for local packages..."
 
 if [ -f "/tmp/scripts/mount-nfs-share.sh" ]; then
+    sudo chmod +x /tmp/scripts/mount-nfs-share.sh
     if sudo /tmp/scripts/mount-nfs-share.sh; then
         echo "✓ NFS share mounted"
     else
@@ -102,12 +108,20 @@ if [ -n "$NODE_TARBALL" ]; then
     sudo tee /etc/profile.d/node.sh > /dev/null <<'EOF'
 export PATH="/usr/local/node/bin:${PATH}"
 EOF
+    # 创建符号链接到 /usr/local/bin，让 sudo 也能找到命令
+    sudo ln -sf /usr/local/node/bin/node /usr/local/bin/node
+    sudo ln -sf /usr/local/node/bin/npm /usr/local/bin/npm
+    sudo ln -sf /usr/local/node/bin/npx /usr/local/bin/npx
     export PATH="/usr/local/node/bin:${PATH}"
     node -v
     npm -v
     echo "✓ Node.js installed from local tarball"
 else
-    if curl -fsSL https://deb.nodesource.com/setup_24.x | sudo -E bash -; then
+    # 手动配置 NodeSource 仓库（避免 setup 脚本的 apt 警告）
+    echo "==> Adding NodeSource repository manually..."
+    if curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | sudo gpg --dearmor -o /usr/share/keyrings/nodesource.gpg; then
+        echo "deb [signed-by=/usr/share/keyrings/nodesource.gpg] https://deb.nodesource.com/node_24.x nodistro main" | sudo tee /etc/apt/sources.list.d/nodesource.list > /dev/null
+        sudo apt-get update
         if sudo DEBIAN_FRONTEND=noninteractive apt-get install -y nodejs; then
             node -v
             npm -v
@@ -116,15 +130,9 @@ else
             echo "⚠️ Node.js install skipped (apt failure)"
         fi
     else
-        echo "⚠️ Node.js install skipped (network failure)"
+        echo "⚠️ Node.js install skipped (GPG key download failure)"
     fi
 fi
-
-# 配置 npm 镜像源
-echo ""
-echo "==> Configuring npm registry mirror..."
-sudo npm config set registry https://registry.npmmirror.com
-echo "✓ npm registry configured"
 
 # 安装 pnpm
 echo ""
@@ -133,13 +141,18 @@ sudo npm install -g pnpm@latest-10
 pnpm -v
 echo "✓ pnpm installed"
 
+# 配置 npm 淘宝镜像源
+echo ""
+echo "==> Configuring npm registry to npmmirror.com..."
+npm config set registry https://registry.npmmirror.com
+echo "✓ npm registry configured"
+
 # 安装全局 npm 包
 echo ""
 echo "==> Installing global npm packages..."
-sudo npm install -g opencode-ai
-sudo npm install -g @anthropic-ai/claude-code
-sudo npm install -g @google/gemini-cli
-sudo npm install -g @openai/codex
+# sudo npm install -g @anthropic-ai/claude-code --registry=https://registry.npmmirror.com
+# sudo npm install -g @google/gemini-cli --registry=https://registry.npmmirror.com
+# sudo npm install -g @openai/codex --registry=https://registry.npmmirror.com
 echo "✓ Global npm packages installed"
 
 # ============================================
@@ -244,65 +257,59 @@ echo "✓ Network wait timeout configured"
 echo ""
 echo "==> Pre-installing VS Code Server..."
 
-# 获取最新 stable commit ID
-VSCODE_COMMIT=$(curl -fsSL --retry 3 "https://update.code.visualstudio.com/api/commits/stable/server-linux-x64" 2>/dev/null | cut -d '"' -f 2 || echo "")
+# 使用 dl-vscode-server 脚本安装 VS Code Server
+# https://github.com/b01/dl-vscode-server
+VSCODE_DIR="/etc/skel/.vscode-server"
 
+# 创建目录并临时设置权限，允许脚本写入（脚本会在 HOME 目录创建符号链接）
+sudo mkdir -p "$VSCODE_DIR"
+sudo mkdir -p "/etc/skel/.vscode"
+sudo chmod 777 /etc/skel
+sudo chmod 777 "$VSCODE_DIR"
+sudo chmod 777 "/etc/skel/.vscode"
+
+# 使用本地 download-vs-code.sh 脚本（来自 b01/dl-vscode-server）
+VSCODE_SCRIPT="/tmp/scripts/download-vs-code.sh"
+chmod +x "$VSCODE_SCRIPT"
+
+# 获取最新 stable commit ID
+VSCODE_COMMIT=$(curl -fsSL "https://update.code.visualstudio.com/api/commits/stable/server-linux-x64" 2>/dev/null | sed 's/^\["\([^"]*\).*$/\1/')
+echo "Latest VS Code stable commit: $VSCODE_COMMIT"
+
+# 临时设置 HOME 为 /etc/skel，让脚本安装到骨架目录
+export HOME="/etc/skel"
+
+echo "Installing VS Code Server for Remote-SSH..."
+"$VSCODE_SCRIPT" --use-commit "$VSCODE_COMMIT" linux x64
+
+echo "Installing VS Code CLI..."
+"$VSCODE_SCRIPT" --use-commit "$VSCODE_COMMIT" --cli linux x64
+
+# 恢复正确的权限
+sudo chmod 755 /etc/skel
+sudo chmod -R 755 "$VSCODE_DIR"
+sudo chmod -R 755 "/etc/skel/.vscode"
+
+# 写入 commit ID 供 cloud-init 使用
+echo "$VSCODE_COMMIT" | sudo tee "$VSCODE_DIR/.commit_id" > /dev/null
+echo "✓ VS Code Server pre-installed (commit: $VSCODE_COMMIT)"
+
+# 安装 VS Code Web（单独处理，dl-vscode-server 不支持）
+echo "Installing VS Code Web..."
+VSCODE_WEB_DIR="/opt/vscode-web"
+sudo mkdir -p "$VSCODE_WEB_DIR"
 if [ -n "$VSCODE_COMMIT" ]; then
-    echo "Latest VS Code commit: $VSCODE_COMMIT"
-    
-    # 创建临时用户目录结构（将被 cloud-init 用户继承）
-    VSCODE_DIR="/etc/skel/.vscode-server"
-    sudo mkdir -p "$VSCODE_DIR/bin/$VSCODE_COMMIT"
-    sudo mkdir -p "$VSCODE_DIR/cli/servers/Stable-$VSCODE_COMMIT/server"
-    
-    # 下载 VS Code CLI (alpine-x64 for musl compatibility)
-    CLI_URL="https://update.code.visualstudio.com/commit:$VSCODE_COMMIT/cli-alpine-x64/stable"
-    echo "Downloading VS Code CLI..."
-    if curl -fsSL --retry 3 "$CLI_URL" -o "/tmp/vscode-cli.tar.gz"; then
-        sudo tar -xzf /tmp/vscode-cli.tar.gz -C "$VSCODE_DIR/bin/$VSCODE_COMMIT"
-        # CLI 解压出来是单个 'code' 可执行文件
-        if sudo test -f "$VSCODE_DIR/bin/$VSCODE_COMMIT/code"; then
-            sudo chmod +x "$VSCODE_DIR/bin/$VSCODE_COMMIT/code"
-            echo "✓ VS Code CLI installed"
-        fi
-        rm -f /tmp/vscode-cli.tar.gz
-    else
-        echo "⚠️ VS Code CLI download failed"
-    fi
-    
-    # 下载 VS Code Server
-    SERVER_URL="https://update.code.visualstudio.com/commit:$VSCODE_COMMIT/server-linux-x64/stable"
-    echo "Downloading VS Code Server..."
-    if curl -fsSL --retry 3 "$SERVER_URL" -o "/tmp/vscode-server.tar.gz"; then
-        sudo tar -xzf /tmp/vscode-server.tar.gz -C "$VSCODE_DIR/cli/servers/Stable-$VSCODE_COMMIT/server" --strip-components=1
-        echo "✓ VS Code Server installed"
-        rm -f /tmp/vscode-server.tar.gz
-    else
-        echo "⚠️ VS Code Server download failed"
-    fi
-    
-    # 下载 VS Code Web (server-linux-x64-web)
     WEB_URL="https://update.code.visualstudio.com/commit:$VSCODE_COMMIT/server-linux-x64-web/stable"
-    echo "Downloading VS Code Web..."
-    # 安装到 /opt/vscode-web，cloud-init 会复制到 /tmp/vscode-web
-    VSCODE_WEB_DIR="/opt/vscode-web"
-    sudo mkdir -p "$VSCODE_WEB_DIR"
     if curl -fsSL --retry 3 "$WEB_URL" -o "/tmp/vscode-web.tar.gz"; then
         sudo tar -xzf /tmp/vscode-web.tar.gz -C "$VSCODE_WEB_DIR" --strip-components=1
         sudo chmod +x "$VSCODE_WEB_DIR/bin/code-server" 2>/dev/null || true
+        sudo chmod +x "$VSCODE_WEB_DIR/node" 2>/dev/null || true
         echo "$VSCODE_COMMIT" | sudo tee "$VSCODE_WEB_DIR/.commit_id" > /dev/null
         echo "✓ VS Code Web installed to $VSCODE_WEB_DIR"
         rm -f /tmp/vscode-web.tar.gz
     else
         echo "⚠️ VS Code Web download failed"
     fi
-    
-    # 写入版本信息
-    echo "$VSCODE_COMMIT" | sudo tee "$VSCODE_DIR/.commit_id" > /dev/null
-    
-    echo "✓ VS Code Server pre-installed (commit: $VSCODE_COMMIT)"
-else
-    echo "⚠️ Could not fetch VS Code commit ID, skipping pre-install"
 fi
 
 # ============================================
