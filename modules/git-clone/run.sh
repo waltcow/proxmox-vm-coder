@@ -10,8 +10,8 @@ POST_CLONE_SCRIPT="${POST_CLONE_SCRIPT}"
 
 # Check if the variable is empty...
 if [ -z "$REPO_URL" ]; then
-  echo "No repository specified!"
-  exit 1
+  echo "No repository specified, skipping git clone."
+  exit 0
 fi
 
 # Check if the variable is empty...

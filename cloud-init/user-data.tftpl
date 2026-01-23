@@ -46,12 +46,12 @@ write_files:
       Description=Setup VS Code Server from pre-installed cache
       After=local-fs.target
       Before=coder-agent.service
-      
+
       [Service]
       Type=oneshot
       ExecStart=/usr/local/bin/setup-vscode-server.sh
       RemainAfterExit=yes
-      
+
       [Install]
       WantedBy=multi-user.target
 
@@ -60,42 +60,59 @@ write_files:
     owner: root:root
     content: |
       #!/bin/bash
-      # 从 Packer 预装的缓存复制 VS Code Server 到用户目录
       set -e
-      
+
       LINUX_USER="${linux_user}"
       LOG_FILE="/var/log/vscode-server-setup.log"
-      
+
       log() {
         echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" | tee -a "$LOG_FILE"
       }
-      
+
       log "=== Setting up VS Code Server ==="
 
-      # 复制 VS Code Server（由 dl-vscode-server 脚本预装）
+      # Copy VS Code Server from /etc/skel
       if [ -d "/etc/skel/.vscode-server" ]; then
         log "Found pre-installed VS Code Server in /etc/skel"
 
-        # 如果用户目录不存在或为空，直接复制整个目录（保留符号链接）
-        if [ ! -d "/home/$LINUX_USER/.vscode-server/bin" ]; then
-          log "Copying VS Code Server to user home..."
-          cp -a "/etc/skel/.vscode-server" "/home/$LINUX_USER/"
-          chown -R $LINUX_USER:$LINUX_USER "/home/$LINUX_USER/.vscode-server"
-          log "✓ VS Code Server copied"
-        else
-          log "VS Code Server already exists in user home, skipping"
-        fi
-
-        # 显示预装版本信息
+        PREINSTALLED_COMMIT=""
         if [ -f "/etc/skel/.vscode-server/.commit_id" ]; then
           PREINSTALLED_COMMIT=$(cat "/etc/skel/.vscode-server/.commit_id" | tr -d '[:space:]')
           log "Pre-installed VS Code commit: $PREINSTALLED_COMMIT"
+        fi
+
+        USER_COMMIT=""
+        if [ -f "/home/$LINUX_USER/.vscode-server/.commit_id" ]; then
+          USER_COMMIT=$(cat "/home/$LINUX_USER/.vscode-server/.commit_id" | tr -d '[:space:]')
+        fi
+
+        NEED_COPY=false
+        if [ ! -d "/home/$LINUX_USER/.vscode-server/bin" ]; then
+          log "VS Code Server not found in user home"
+          NEED_COPY=true
+        elif [ "$PREINSTALLED_COMMIT" != "$USER_COMMIT" ]; then
+          log "Version mismatch: pre-installed=$PREINSTALLED_COMMIT, user=$USER_COMMIT"
+          NEED_COPY=true
+        fi
+
+        if [ "$NEED_COPY" = true ]; then
+          log "Copying VS Code Server to user home..."
+          if command -v rsync >/dev/null 2>&1; then
+            rsync -a "/etc/skel/.vscode-server/" "/home/$LINUX_USER/.vscode-server/"
+          else
+            rm -rf "/home/$LINUX_USER/.vscode-server"
+            cp -a "/etc/skel/.vscode-server" "/home/$LINUX_USER/"
+          fi
+          chown -R $LINUX_USER:$LINUX_USER "/home/$LINUX_USER/.vscode-server"
+          log "✓ VS Code Server copied"
+        else
+          log "VS Code Server already up-to-date in user home"
         fi
       else
         log "WARNING: No pre-installed VS Code Server found in /etc/skel"
       fi
 
-      # 也复制 ~/.vscode 目录（CLI tunnel 支持 vscode.dev）
+      # Copy ~/.vscode directory (CLI tunnel support)
       if [ -d "/etc/skel/.vscode" ]; then
         if [ ! -d "/home/$LINUX_USER/.vscode/cli" ]; then
           log "Copying VS Code CLI config..."
@@ -104,8 +121,8 @@ write_files:
           log "✓ VS Code CLI config copied"
         fi
       fi
-      
-      # 复制 VS Code Web
+
+      # Copy VS Code Web to /tmp
       if [ -d "/opt/vscode-web" ] && [ -f "/opt/vscode-web/bin/code-server" ]; then
         log "Found pre-installed VS Code Web in /opt/vscode-web"
 
@@ -114,22 +131,14 @@ write_files:
           rm -rf /tmp/vscode-web
           cp -rp /opt/vscode-web /tmp/vscode-web
           chown -R $LINUX_USER:$LINUX_USER /tmp/vscode-web
-          # 确保可执行文件有执行权限
           chmod +x /tmp/vscode-web/bin/code-server 2>/dev/null || true
           chmod +x /tmp/vscode-web/node 2>/dev/null || true
           log "✓ VS Code Web copied to /tmp/vscode-web"
         else
-          log "VS Code Web already exists in /tmp/vscode-web, skipping copy"
+          log "VS Code Web already exists in /tmp/vscode-web"
         fi
-        
-        if [ -f "/tmp/vscode-web/.commit_id" ]; then
-          COMMIT=$(cat "/tmp/vscode-web/.commit_id")
-          log "Pre-installed VS Code Web commit: $COMMIT"
-        fi
-      else
-        log "WARNING: No pre-installed VS Code Web found in /opt/vscode-web"
       fi
-      
+
       log "=== VS Code setup completed ==="
 
 runcmd:

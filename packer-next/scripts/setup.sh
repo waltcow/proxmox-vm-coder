@@ -8,7 +8,7 @@ set -euo pipefail
 # Configuration
 # ============================================
 GO_VERSION="1.24.0"
-NODE_VERSION="20.x" # Fallback if local tarball not found
+NODE_VERSION="24.x"
 PNPM_VERSION="latest-10"
 
 # Paths
@@ -27,7 +27,14 @@ warn() { echo -e "\033[1;33m⚠️  $1\033[0m"; }
 error() { echo -e "\033[1;31m❌ $1\033[0m"; exit 1; }
 
 # ============================================
-# 0. Network & Routing
+# 0. Fix script permissions (Packer file provisioner doesn't preserve +x)
+# ============================================
+if [ -d "${TMP_SCRIPTS_DIR}" ]; then
+    chmod +x "${TMP_SCRIPTS_DIR}"/*.sh 2>/dev/null || true
+fi
+
+# ============================================
+# 0.1 Network & Routing
 # ============================================
 log "Switching to bypass router for external network access..."
 if [ -x "${TMP_SCRIPTS_DIR}/route-switch.sh" ]; then
@@ -127,11 +134,15 @@ npm config set registry "${NPM_REGISTRY}"
 echo "registry=${NPM_REGISTRY}" | sudo tee /etc/skel/.npmrc > /dev/null
 
 log "Installing global npm packages..."
-# Install AI-related CLIs
+
+echo "Installing Claude Code CLI..."
 sudo npm install -g @anthropic-ai/claude-code --registry="${NPM_REGISTRY}"
-# Note: These are placeholders/examples from the user, ensuring they are available if the names are correct
-# sudo npm install -g @google/gemini-cli --registry="${NPM_REGISTRY}"
-# sudo npm install -g @openai/codex --registry="${NPM_REGISTRY}"
+echo "Installing Gemini CLI..."
+sudo npm install -g @google/gemini-cli --registry="${NPM_REGISTRY}"
+
+echo "Installing OpenAI CLI..."
+sudo npm install -g @openai/codex --registry="${NPM_REGISTRY}"
+
 log "Installing Go..."
 
 install_go_local() {
@@ -167,7 +178,7 @@ export PATH="/usr/local/go/bin:${PATH}"
 go version
 
 # ============================================
-# 6. System Configuration
+# 5. System Configuration
 # ============================================
 log "Disabling automatic updates..."
 sudo systemctl disable --now apt-daily.timer apt-daily-upgrade.timer || true
@@ -187,51 +198,97 @@ sudo mkdir -p /etc/systemd/system/systemd-networkd-wait-online.service.d
 echo -e "[Service]\nTimeoutStartSec=5s" | sudo tee /etc/systemd/system/systemd-networkd-wait-online.service.d/override.conf > /dev/null
 
 # ============================================
-# 7. VS Code Server (Pre-install)
+# 6. VS Code (Pre-install)
 # ============================================
-log "Pre-installing VS Code Server..."
+log "Pre-installing VS Code..."
 
-# Prepare directories with correct permissions
-sudo mkdir -p "${VSCODE_SERVER_DIR}" "/etc/skel/.vscode"
+# Check for local VS Code Web tarball
+VSCODE_WEB_TARBALL=$(find "${NFS_SHARE_DIR}/vscode" -name "vscode-server-linux-x64-web*.tar.gz" 2>/dev/null | sort -V | tail -n1 || true)
 
-# Fetch latest commit
-VSCODE_COMMIT=$(curl -fsSL "https://update.code.visualstudio.com/api/commits/stable/server-linux-x64" | sed 's/^\["\([^"]*\).*$/\1/')
-log "Latest VS Code stable commit: ${VSCODE_COMMIT}"
+# Extract commit from local tarball or fetch from remote
+if [ -n "$VSCODE_WEB_TARBALL" ]; then
+    VSCODE_COMMIT=$(basename "$VSCODE_WEB_TARBALL" | sed -n 's/.*-web-\([a-f0-9]*\)\.tar\.gz/\1/p')
+    log "Using local VS Code commit: ${VSCODE_COMMIT}"
+else
+    VSCODE_COMMIT=$(curl -fsSL "https://update.code.visualstudio.com/api/commits/stable/server-linux-x64" | sed 's/^\["\([^"]*\).*$/\1/')
+    log "Latest VS Code stable commit: ${VSCODE_COMMIT}"
+fi
 
-# Use a temporary home for installation to avoid polluting root or needing insecure perms
+# Use a temporary home for installation
 TMP_HOME=$(mktemp -d)
 cp "${TMP_SCRIPTS_DIR}/download-vs-code.sh" "${TMP_HOME}/"
 chmod +x "${TMP_HOME}/download-vs-code.sh"
-
 export HOME="${TMP_HOME}"
-"${TMP_HOME}/download-vs-code.sh" --use-commit "${VSCODE_COMMIT}" linux x64
-"${TMP_HOME}/download-vs-code.sh" --use-commit "${VSCODE_COMMIT}" --cli linux x64
-"${TMP_HOME}/download-vs-code.sh" --use-commit "${VSCODE_COMMIT}" --web linux x64
 
-# Move Server/CLI artifacts to /etc/skel
-sudo cp -r "${TMP_HOME}/.vscode-server"/* "${VSCODE_SERVER_DIR}/"
-sudo cp -r "${TMP_HOME}/.vscode"/* "/etc/skel/.vscode/"
-
-# Move Web artifacts to /opt/vscode-web
-log "Installing VS Code Web..."
-sudo mkdir -p "${VSCODE_WEB_DIR}"
-if [ -d "${TMP_HOME}/.vscode-web" ]; then
-    sudo cp -r "${TMP_HOME}/.vscode-web"/* "${VSCODE_WEB_DIR}/"
-    echo "${VSCODE_COMMIT}" | sudo tee "${VSCODE_WEB_DIR}/.commit_id" > /dev/null
-    log "VS Code Web installed."
+# Install VS Code Server (for Remote SSH)
+log "Installing VS Code Server..."
+VSCODE_SERVER_TARBALL=$(find "${NFS_SHARE_DIR}/vscode" -name "vscode-server-linux-x64-${VSCODE_COMMIT}.tar.gz" 2>/dev/null | head -n1 || true)
+if [ -n "$VSCODE_SERVER_TARBALL" ]; then
+    log "Installing VS Code Server from local tarball"
+    sudo mkdir -p "${VSCODE_SERVER_DIR}/bin/${VSCODE_COMMIT}"
+    sudo mkdir -p "${VSCODE_SERVER_DIR}/extensions"
+    sudo mkdir -p "${VSCODE_SERVER_DIR}/extensionsCache"
+    sudo mkdir -p "${VSCODE_SERVER_DIR}/cli/servers/Stable-${VSCODE_COMMIT}"
+    sudo mkdir -p "/etc/skel/.vscode/cli/servers/Stable-${VSCODE_COMMIT}"
+    sudo tar -xzf "$VSCODE_SERVER_TARBALL" -C "${VSCODE_SERVER_DIR}/bin/${VSCODE_COMMIT}" --strip-components=1
+    # Create symlinks for CLI server discovery
+    sudo ln -sf "${VSCODE_SERVER_DIR}/bin/${VSCODE_COMMIT}" "${VSCODE_SERVER_DIR}/bin/default_version"
+    sudo ln -sf "${VSCODE_SERVER_DIR}/bin/${VSCODE_COMMIT}" "${VSCODE_SERVER_DIR}/cli/servers/Stable-${VSCODE_COMMIT}/server"
+    sudo ln -sf "${VSCODE_SERVER_DIR}/bin/${VSCODE_COMMIT}" "/etc/skel/.vscode/cli/servers/Stable-${VSCODE_COMMIT}/server"
 else
-    warn "VS Code Web download failed (directory not found)."
+    "${TMP_HOME}/download-vs-code.sh" --use-commit "${VSCODE_COMMIT}" linux x64
 fi
+
+# Install VS Code CLI
+log "Installing VS Code CLI..."
+VSCODE_CLI_TARBALL=$(find "${NFS_SHARE_DIR}/vscode" -name "vscode-cli-linux-x64-${VSCODE_COMMIT}.tar.gz" 2>/dev/null | head -n1 || true)
+if [ -n "$VSCODE_CLI_TARBALL" ]; then
+    log "Installing VS Code CLI from local tarball"
+    sudo tar -xzf "$VSCODE_CLI_TARBALL" -C "${VSCODE_SERVER_DIR}" --no-same-owner
+    sudo ln -sf "${VSCODE_SERVER_DIR}/code" "${VSCODE_SERVER_DIR}/code-${VSCODE_COMMIT}"
+else
+    "${TMP_HOME}/download-vs-code.sh" --use-commit "${VSCODE_COMMIT}" --cli linux x64
+fi
+
+# Install VS Code Web
+log "Installing VS Code Web..."
+if [ -n "$VSCODE_WEB_TARBALL" ]; then
+    log "Installing VS Code Web from local tarball"
+    sudo mkdir -p "${VSCODE_WEB_DIR}"
+    sudo tar -xzf "$VSCODE_WEB_TARBALL" -C "${VSCODE_WEB_DIR}" --strip-components=1
+    sudo chmod +x "${VSCODE_WEB_DIR}/bin/code-server" "${VSCODE_WEB_DIR}/node"
+else
+    "${TMP_HOME}/download-vs-code.sh" --use-commit "${VSCODE_COMMIT}" --web linux x64
+    if [ -d "${TMP_HOME}/.vscode-web" ]; then
+        sudo mkdir -p "${VSCODE_WEB_DIR}"
+        sudo cp -r "${TMP_HOME}/.vscode-web"/* "${VSCODE_WEB_DIR}/"
+    fi
+fi
+
+# Copy Server/CLI artifacts to /etc/skel
+if [ -d "${TMP_HOME}/.vscode-server" ]; then
+    sudo mkdir -p "${VSCODE_SERVER_DIR}"
+    sudo cp -r "${TMP_HOME}/.vscode-server"/* "${VSCODE_SERVER_DIR}/"
+fi
+if [ -d "${TMP_HOME}/.vscode" ]; then
+    sudo mkdir -p "/etc/skel/.vscode"
+    sudo cp -r "${TMP_HOME}/.vscode"/* "/etc/skel/.vscode/"
+fi
+
+# Write commit IDs
+echo "${VSCODE_COMMIT}" | sudo tee "${VSCODE_SERVER_DIR}/.commit_id" > /dev/null
+echo "${VSCODE_COMMIT}" | sudo tee "${VSCODE_WEB_DIR}/.commit_id" > /dev/null
+
+# Set permissions
+sudo chmod -R 755 "${VSCODE_SERVER_DIR}" "${VSCODE_WEB_DIR}"
+[ -d "/etc/skel/.vscode" ] && sudo chmod -R 755 "/etc/skel/.vscode"
 
 # Clean up
 rm -rf "${TMP_HOME}"
-
-# Set permissions
-sudo chmod -R 755 "${VSCODE_SERVER_DIR}" "/etc/skel/.vscode" "${VSCODE_WEB_DIR}"
-echo "${VSCODE_COMMIT}" | sudo tee "${VSCODE_SERVER_DIR}/.commit_id" > /dev/null
+log "VS Code installation completed."
 
 # ============================================
-# 8. Install Custom Scripts
+# 7. Install Custom Scripts
 # ============================================
 log "Installing custom scripts..."
 
@@ -251,7 +308,7 @@ install_script "${TMP_SCRIPTS_DIR}/route-switch.sh" "/usr/local/sbin/route-switc
 install_script "${TMP_SCRIPTS_DIR}/mount-nfs-share.sh" "/usr/local/bin/mount-nfs-share.sh"
 
 # ============================================
-# 9. Finalize
+# 8. Finalize
 # ============================================
 log "Writing template metadata..."
 cat <<EOF | sudo tee /etc/template-build-info > /dev/null

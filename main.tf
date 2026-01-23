@@ -97,7 +97,7 @@ variable "clone_template_vmid" {
 variable "vscode_commit_id" {
   description = "VS Code Server 的 commit ID (用于固定版本)"
   type        = string
-  default     = "585eba7c0c34fd6b30faac7c62a42050bfbc0086"
+  default     = "c9d77990917f3102ada88be140d28b038d1dd7c7"
 }
 
 data "coder_workspace" "me" {}
@@ -135,7 +135,7 @@ data "coder_parameter" "disk_size_gb" {
 data "coder_parameter" "git_repo" {
   name         = "git_repo"
   display_name = "Git repository"
-  default      = ""
+  default      = "https://github.com/polpo-space/wownow-mobile"
 }
 
 data "coder_parameter" "vscode_web_share" {
