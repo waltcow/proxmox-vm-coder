@@ -1,157 +1,90 @@
 #!/bin/bash
-# Packer 清理脚本
-# 用于清理系统，确保模板可以被正确克隆
+# Packer Cleanup Script
+# Prepares the system for cloning by cleaning up logs, cache, keys, and identifiers.
 
-set -e
-
-echo "============================================"
-echo "Starting system cleanup..."
-echo "============================================"
+set -euo pipefail
 
 # ============================================
-# 1. 停止服务
+# Helpers
 # ============================================
-echo ""
-echo "==> Stopping services..."
+log() { echo -e "\n\033[1;32m==> $1\033[0m"; }
 
+# ============================================
+# 1. Stop Services
+# ============================================
+log "Stopping services..."
 sudo systemctl stop qemu-guest-agent || true
 
-echo "✓ Services stopped"
-
 # ============================================
-# 2. 清理 APT 缓存
+# 2. Cleanup APT
 # ============================================
-echo ""
-echo "==> Cleaning APT cache..."
-
+log "Cleaning APT cache..."
 sudo apt-get autoremove -y
 sudo apt-get autoclean -y
 sudo apt-get clean -y
 sudo rm -rf /var/lib/apt/lists/*
 
-echo "✓ APT cache cleaned"
-
 # ============================================
-# 3. 清理日志
+# 3. Cleanup Logs
 # ============================================
-echo ""
-echo "==> Cleaning logs..."
-
+log "Cleaning logs..."
+# Truncate all logs to 0 size
 sudo find /var/log -type f -name "*.log" -exec truncate -s 0 {} \;
-sudo find /var/log -type f -name "*.gz" -delete
-sudo find /var/log -type f -name "*.1" -delete
-sudo find /var/log -type f -name "*.old" -delete
+# Remove archived logs
+sudo find /var/log -type f \( -name "*.gz" -o -name "*.1" -o -name "*.old" \) -delete
 sudo journalctl --vacuum-time=1s
 
-echo "✓ Logs cleaned"
+# ============================================
+# 4. Cleanup Temp Files
+# ============================================
+log "Cleaning temporary files..."
+sudo rm -rf /tmp/* /var/tmp/*
 
 # ============================================
-# 4. 清理临时文件
+# 5. Reset Machine Identity
 # ============================================
-echo ""
-echo "==> Cleaning temporary files..."
-
-sudo rm -rf /tmp/*
-sudo rm -rf /var/tmp/*
-
-echo "✓ Temporary files cleaned"
-
-# ============================================
-# 5. 删除 SSH 主机密钥（重要！）
-# ============================================
-echo ""
-echo "==> Removing SSH host keys..."
-
+log "Removing SSH host keys and machine-id..."
 sudo rm -f /etc/ssh/ssh_host_*
 
-echo "✓ SSH host keys removed"
-
-# ============================================
-# 6. 清空 machine-id（重要！）
-# ============================================
-echo ""
-echo "==> Truncating machine-id..."
-
+# Reset machine-id (maintain the file but empty, and ensure dbus symlink)
 sudo truncate -s 0 /etc/machine-id
 sudo rm -f /var/lib/dbus/machine-id
-sudo ln -s /etc/machine-id /var/lib/dbus/machine-id
-
-echo "✓ Machine-id truncated"
+sudo ln -sf /etc/machine-id /var/lib/dbus/machine-id
 
 # ============================================
-# 7. 删除特定的 cloud-init 配置文件
+# 6. Cleanup Cloud-Init
 # ============================================
-echo ""
-echo "==> Removing specific cloud-init configuration files..."
+log "Cleaning cloud-init state and configurations..."
 
-# 这些文件会干扰 Proxmox 的 cloud-init 配置
-sudo rm -f /etc/cloud/cloud.cfg.d/50-curtin-networking.cfg
-sudo rm -f /etc/cloud/cloud.cfg.d/subiquity-disable-cloudinit-networking.cfg
-sudo rm -f /etc/cloud/cloud.cfg.d/90-installer-network.cfg
-sudo rm -f /etc/cloud/cloud.cfg.d/99-installer.cfg
-sudo rm -f /etc/cloud/cloud-init.disabled
-sudo rm -f /etc/netplan/50-cloud-init.yaml
+CLOUD_CONFIG_FILES=(
+    "/etc/cloud/cloud.cfg.d/50-curtin-networking.cfg"
+    "/etc/cloud/cloud.cfg.d/subiquity-disable-cloudinit-networking.cfg"
+    "/etc/cloud/cloud.cfg.d/90-installer-network.cfg"
+    "/etc/cloud/cloud.cfg.d/99-installer.cfg"
+    "/etc/cloud/cloud-init.disabled"
+    "/etc/netplan/50-cloud-init.yaml"
+    "/etc/netplan/00-installer-config.yaml"
+)
 
-echo "✓ Specific cloud-init files removed"
-
-# ============================================
-# 8. 清理 cloud-init 状态（重要！）
-# ============================================
-echo ""
-echo "==> Cleaning cloud-init state..."
-
+sudo rm -f "${CLOUD_CONFIG_FILES[@]}"
 sudo cloud-init clean --logs --seed
 
-echo "✓ Cloud-init state cleaned"
-
 # ============================================
-# 9. 清理 shell 历史记录
+# 7. Cleanup User Data
 # ============================================
-echo ""
-echo "==> Cleaning shell history..."
+log "Cleaning user cache and history..."
+sudo rm -rf ~/.cache/* ~/.config/*
 
+# Clear history for current user and root
 history -c
 cat /dev/null > ~/.bash_history
 sudo sh -c ': > /root/.bash_history' 2>/dev/null || true
 
-echo "✓ Shell history cleaned"
-
 # ============================================
-# 10. 清理网络配置
+# 8. Finalize
 # ============================================
-echo ""
-echo "==> Cleaning network configuration..."
-
-sudo rm -f /etc/netplan/00-installer-config.yaml
-
-echo "✓ Network configuration cleaned"
-
-# ============================================
-# 11. 清理用户缓存和配置
-# ============================================
-echo ""
-echo "==> Cleaning user cache..."
-
-sudo rm -rf ~/.cache/*
-sudo rm -rf ~/.config/*
-
-echo "✓ User cache cleaned"
-
-# ============================================
-# 12. 同步文件系统
-# ============================================
-echo ""
-echo "==> Syncing filesystem..."
-
+log "Syncing filesystem..."
 sync
 
-echo "✓ Filesystem synced"
-
-# ============================================
-# 完成
-# ============================================
-echo ""
-echo "============================================"
-echo "Cleanup completed successfully!"
-echo "System is ready to be converted to template"
-echo "============================================"
+log "Cleanup completed successfully!"
+echo "System is ready to be converted to template."

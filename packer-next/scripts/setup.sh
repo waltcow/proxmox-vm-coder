@@ -1,371 +1,273 @@
 #!/bin/bash
-# Packer 系统配置脚本
-# 用于配置 Ubuntu 24.04 系统：替换镜像源、安装软件包
+# Packer System Setup Script
+# Configures Ubuntu 24.04: mirrors, packages, runtimes (Node.js/Go), and VS Code.
 
-set -e
-
-echo "============================================"
-echo "Starting system setup..."
-echo "============================================"
+set -euo pipefail
 
 # ============================================
-# 0. 切换到旁路由（确保能访问外网下载软件）
+# Configuration
 # ============================================
-echo ""
-echo "==> Switching to bypass router for external network access..."
+GO_VERSION="1.24.0"
+NODE_VERSION="20.x" # Fallback if local tarball not found
+PNPM_VERSION="latest-10"
 
-if [ -f "/tmp/scripts/route-switch.sh" ]; then
-    sudo chmod +x /tmp/scripts/route-switch.sh
-    sudo /tmp/scripts/route-switch.sh to-bypass || echo "⚠️ Route switch failed, continuing anyway..."
+# Paths
+NFS_SHARE_DIR="/share"
+VSCODE_SERVER_DIR="/etc/skel/.vscode-server"
+VSCODE_WEB_DIR="/opt/vscode-web"
+TMP_SCRIPTS_DIR="/tmp/scripts"
+
+# URLs
+TSINGHUA_UBUNTU_MIRROR="https://mirrors.tuna.tsinghua.edu.cn/ubuntu/"
+NPM_REGISTRY="https://registry.npmmirror.com"
+
+# Logging Helpers
+log() { echo -e "\n\033[1;32m==> $1\033[0m"; }
+warn() { echo -e "\033[1;33m⚠️  $1\033[0m"; }
+error() { echo -e "\033[1;31m❌ $1\033[0m"; exit 1; }
+
+# ============================================
+# 0. Network & Routing
+# ============================================
+log "Switching to bypass router for external network access..."
+if [ -x "${TMP_SCRIPTS_DIR}/route-switch.sh" ]; then
+    sudo "${TMP_SCRIPTS_DIR}/route-switch.sh" to-bypass || warn "Route switch failed, continuing..."
 else
-    echo "⚠️ route-switch.sh not found, skipping route switch"
+    warn "route-switch.sh not found."
 fi
 
 # ============================================
-# 1. 配置清华大学镜像源
+# 1. Configure Mirrors
 # ============================================
-echo ""
-echo "==> Configuring Tsinghua University Ubuntu mirrors..."
-
-# Disable default ubuntu.sources to avoid duplicate entries with /etc/apt/sources.list
+log "Configuring Tsinghua University Ubuntu mirrors..."
 if [ -f "/etc/apt/sources.list.d/ubuntu.sources" ]; then
     sudo mv /etc/apt/sources.list.d/ubuntu.sources /etc/apt/sources.list.d/ubuntu.sources.disabled
 fi
 
-sudo tee /etc/apt/sources.list > /dev/null <<'EOF'
-# 清华大学开源软件镜像站 - Ubuntu 24.04 (Noble)
-deb https://mirrors.tuna.tsinghua.edu.cn/ubuntu/ noble main restricted universe multiverse
-deb https://mirrors.tuna.tsinghua.edu.cn/ubuntu/ noble-updates main restricted universe multiverse
-deb https://mirrors.tuna.tsinghua.edu.cn/ubuntu/ noble-backports main restricted universe multiverse
-deb https://mirrors.tuna.tsinghua.edu.cn/ubuntu/ noble-security main restricted universe multiverse
+cat <<EOF | sudo tee /etc/apt/sources.list > /dev/null
+deb ${TSINGHUA_UBUNTU_MIRROR} noble main restricted universe multiverse
+deb ${TSINGHUA_UBUNTU_MIRROR} noble-updates main restricted universe multiverse
+deb ${TSINGHUA_UBUNTU_MIRROR} noble-backports main restricted universe multiverse
+deb ${TSINGHUA_UBUNTU_MIRROR} noble-security main restricted universe multiverse
 EOF
 
-echo "✓ Mirror sources configured"
-
 # ============================================
-# 2. 更新包索引
+# 2. Update & Install Packages
 # ============================================
-echo ""
-echo "==> Updating package index..."
-
+log "Updating package index and installing base packages..."
 sudo apt-get update
 
-echo "✓ Package index updated"
+DEBIAN_FRONTEND=noninteractive sudo apt-get install -y \
+    curl ca-certificates git net-tools jq wget \
+    apt-transport-https gnupg software-properties-common nfs-common
 
 # ============================================
-# 3. 安装必需的软件包
+# 3. Mount NFS (Optional)
 # ============================================
-echo ""
-echo "==> Installing required packages..."
-
-sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
-    curl \
-    ca-certificates \
-    git \
-    net-tools \
-    jq \
-    wget \
-    apt-transport-https \
-    gnupg \
-    software-properties-common \
-    nfs-common
-
-echo "✓ Required packages installed"
-
-# ============================================
-# 3.5. 尝试挂载 NFS 共享（用于本地预置包）
-# ============================================
-echo ""
-echo "==> Attempting to mount NFS share for local packages..."
-
-if [ -f "/tmp/scripts/mount-nfs-share.sh" ]; then
-    sudo chmod +x /tmp/scripts/mount-nfs-share.sh
-    if sudo /tmp/scripts/mount-nfs-share.sh; then
-        echo "✓ NFS share mounted"
+log "Attempting to mount NFS share..."
+if [ -x "${TMP_SCRIPTS_DIR}/mount-nfs-share.sh" ]; then
+    if sudo "${TMP_SCRIPTS_DIR}/mount-nfs-share.sh"; then
+        log "NFS share mounted."
     else
-        echo "⚠️ NFS mount failed, falling back to remote downloads"
+        warn "NFS mount failed, falling back to remote downloads."
     fi
 else
-    echo "⚠️ mount-nfs-share.sh not found in /tmp/scripts/"
+    warn "mount-nfs-share.sh not found."
 fi
 
 # ============================================
-# 4. 安装 Node.js（NodeSource APT）
+# 4. Install Node.js
 # ============================================
-echo ""
-echo "==> Installing Node.js via NodeSource APT..."
+log "Installing Node.js..."
 
-NODE_TARBALL=""
-if [ -d "/share/nodejs" ]; then
-    NODE_TARBALL=$(ls -1 /share/nodejs/node-v*-linux-x64.tar.xz 2>/dev/null | sort -V | tail -n1 || true)
-fi
-
-if [ -n "$NODE_TARBALL" ]; then
-    echo "==> Installing Node.js from local tarball: $NODE_TARBALL"
+install_node_local() {
+    local tarball="$1"
+    log "Installing Node.js from local tarball: $tarball"
     sudo rm -rf /usr/local/node
     sudo mkdir -p /usr/local/node
-    sudo tar -xJf "$NODE_TARBALL" -C /usr/local/node --strip-components=1
-    sudo tee /etc/profile.d/node.sh > /dev/null <<'EOF'
-export PATH="/usr/local/node/bin:${PATH}"
-EOF
-    # 创建符号链接到 /usr/local/bin，让 sudo 也能找到命令
-    sudo ln -sf /usr/local/node/bin/node /usr/local/bin/node
-    sudo ln -sf /usr/local/node/bin/npm /usr/local/bin/npm
-    sudo ln -sf /usr/local/node/bin/npx /usr/local/bin/npx
-    export PATH="/usr/local/node/bin:${PATH}"
-    node -v
-    npm -v
-    echo "✓ Node.js installed from local tarball"
+    sudo tar -xJf "$tarball" -C /usr/local/node --strip-components=1
+    
+    # Profile setup
+    echo 'export PATH="/usr/local/node/bin:${PATH}"' | sudo tee /etc/profile.d/node.sh > /dev/null
+    
+    # Symlinks
+    for bin in node npm npx; do
+        sudo ln -sf "/usr/local/node/bin/$bin" "/usr/local/bin/$bin"
+    done
+}
+
+install_node_remote() {
+    log "Installing Node.js via NodeSource..."
+    curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | sudo gpg --dearmor -o /usr/share/keyrings/nodesource.gpg
+    echo "deb [signed-by=/usr/share/keyrings/nodesource.gpg] https://deb.nodesource.com/node_24.x nodistro main" | sudo tee /etc/apt/sources.list.d/nodesource.list > /dev/null
+    sudo apt-get update
+    DEBIAN_FRONTEND=noninteractive sudo apt-get install -y nodejs
+}
+
+NODE_TARBALL=$(find "${NFS_SHARE_DIR}/nodejs" -name "node-v*-linux-x64.tar.xz" 2>/dev/null | sort -V | tail -n1 || true)
+if [ -n "$NODE_TARBALL" ]; then
+    install_node_local "$NODE_TARBALL"
 else
-    # 手动配置 NodeSource 仓库（避免 setup 脚本的 apt 警告）
-    echo "==> Adding NodeSource repository manually..."
-    if curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | sudo gpg --dearmor -o /usr/share/keyrings/nodesource.gpg; then
-        echo "deb [signed-by=/usr/share/keyrings/nodesource.gpg] https://deb.nodesource.com/node_24.x nodistro main" | sudo tee /etc/apt/sources.list.d/nodesource.list > /dev/null
-        sudo apt-get update
-        if sudo DEBIAN_FRONTEND=noninteractive apt-get install -y nodejs; then
-            node -v
-            npm -v
-            echo "✓ Node.js installed via NodeSource APT"
-        else
-            echo "⚠️ Node.js install skipped (apt failure)"
-        fi
-    else
-        echo "⚠️ Node.js install skipped (GPG key download failure)"
-    fi
+    install_node_remote
 fi
 
-# 安装 pnpm
-echo ""
-echo "==> Installing pnpm..."
-sudo npm install -g pnpm@latest-10
+# Verification
+export PATH="/usr/local/node/bin:${PATH}"
+node -v && npm -v
+
+log "Installing pnpm..."
+sudo npm install -g "pnpm@${PNPM_VERSION}" --registry="${NPM_REGISTRY}"
 pnpm -v
-echo "✓ pnpm installed"
 
-# 配置 npm 淘宝镜像源
-echo ""
-echo "==> Configuring npm registry to npmmirror.com..."
-npm config set registry https://registry.npmmirror.com
-echo "✓ npm registry configured"
+log "Configuring npm registry..."
+sudo npm config set registry "${NPM_REGISTRY}" -g
+npm config set registry "${NPM_REGISTRY}"
 
-# 安装全局 npm 包
-echo ""
-echo "==> Installing global npm packages..."
-# sudo npm install -g @anthropic-ai/claude-code --registry=https://registry.npmmirror.com
-# sudo npm install -g @google/gemini-cli --registry=https://registry.npmmirror.com
-# sudo npm install -g @openai/codex --registry=https://registry.npmmirror.com
-echo "✓ Global npm packages installed"
+# Set registry for future users
+echo "registry=${NPM_REGISTRY}" | sudo tee /etc/skel/.npmrc > /dev/null
 
-# ============================================
-# 5. 安装 Go（官方发行版）
-# ============================================
-echo ""
-echo "==> Installing Go from official tarball..."
+log "Installing global npm packages..."
+# Install AI-related CLIs
+sudo npm install -g @anthropic-ai/claude-code --registry="${NPM_REGISTRY}"
+# Note: These are placeholders/examples from the user, ensuring they are available if the names are correct
+# sudo npm install -g @google/gemini-cli --registry="${NPM_REGISTRY}"
+# sudo npm install -g @openai/codex --registry="${NPM_REGISTRY}"
+log "Installing Go..."
 
-GO_VERSION="1.24.12"
-GO_TARBALL="go${GO_VERSION}.linux-amd64.tar.gz"
-GO_URL="https://mirrors.aliyun.com/golang/${GO_TARBALL}"
+install_go_local() {
+    local tarball="$1"
+    log "Installing Go from local tarball: $tarball"
+    sudo rm -rf /usr/local/go
+    sudo tar -C /usr/local -xzf "$tarball"
+}
 
-GO_LOCAL_TARBALL=""
-if [ -d "/share/golang" ]; then
-    GO_LOCAL_TARBALL=$(ls -1 /share/golang/go*.linux-amd64.tar.gz 2>/dev/null | sort -V | tail -n1 || true)
-fi
+install_go_remote() {
+    local version="$1"
+    local tarball="go${version}.linux-amd64.tar.gz"
+    local url="https://mirrors.aliyun.com/golang/${tarball}"
+    log "Downloading Go ${version} from ${url}..."
+    
+    curl -fsSL "${url}" -o "/tmp/${tarball}"
+    sudo rm -rf /usr/local/go
+    sudo tar -C /usr/local -xzf "/tmp/${tarball}"
+    rm -f "/tmp/${tarball}"
+}
+
+GO_LOCAL_TARBALL=$(find "${NFS_SHARE_DIR}/golang" -name "go*.linux-amd64.tar.gz" 2>/dev/null | sort -V | tail -n1 || true)
 
 if [ -n "$GO_LOCAL_TARBALL" ]; then
-    echo "==> Installing Go from local tarball: $GO_LOCAL_TARBALL"
-    sudo rm -rf /usr/local/go
-    sudo tar -C /usr/local -xzf "$GO_LOCAL_TARBALL"
-    sudo tee /etc/profile.d/go.sh > /dev/null <<'EOF'
-export PATH="/usr/local/go/bin:${PATH}"
-EOF
-    export PATH="/usr/local/go/bin:${PATH}"
-    go version
-    echo "✓ Go installed from local tarball"
+    install_go_local "$GO_LOCAL_TARBALL"
 else
-    if curl -fsSL "${GO_URL}" -o "/tmp/${GO_TARBALL}"; then
-        sudo rm -rf /usr/local/go
-        sudo tar -C /usr/local -xzf "/tmp/${GO_TARBALL}"
-        sudo tee /etc/profile.d/go.sh > /dev/null <<'EOF'
-export PATH="/usr/local/go/bin:${PATH}"
-EOF
-        export PATH="/usr/local/go/bin:${PATH}"
-        go version
-        echo "✓ Go installed from official tarball"
-    else
-        echo "⚠️ Go install skipped (download failure)"
-    fi
+    install_go_remote "$GO_VERSION"
 fi
 
-# ============================================
-# 6. 禁用自动更新（模板中不需要）
-# ============================================
-echo ""
-echo "==> Disabling automatic updates..."
-
-sudo systemctl disable apt-daily.timer 2>/dev/null || true
-sudo systemctl disable apt-daily-upgrade.timer 2>/dev/null || true
-sudo systemctl mask apt-daily.service 2>/dev/null || true
-sudo systemctl mask apt-daily-upgrade.service 2>/dev/null || true
-
-echo "✓ Automatic updates disabled"
+# Setup Go environment
+echo 'export PATH="/usr/local/go/bin:${PATH}"' | sudo tee /etc/profile.d/go.sh > /dev/null
+export PATH="/usr/local/go/bin:${PATH}"
+go version
 
 # ============================================
-# 7. 安装并启用 qemu-guest-agent
+# 6. System Configuration
 # ============================================
-echo ""
-echo "==> Installing and enabling qemu-guest-agent..."
+log "Disabling automatic updates..."
+sudo systemctl disable --now apt-daily.timer apt-daily-upgrade.timer || true
+sudo systemctl mask apt-daily.service apt-daily-upgrade.service || true
 
+log "Configuring qemu-guest-agent..."
 if ! dpkg -l | grep -q qemu-guest-agent; then
-    sudo DEBIAN_FRONTEND=noninteractive apt-get install -y qemu-guest-agent
+    DEBIAN_FRONTEND=noninteractive sudo apt-get install -y qemu-guest-agent
 fi
+sudo systemctl enable --now qemu-guest-agent
 
-sudo systemctl enable qemu-guest-agent
-sudo systemctl start qemu-guest-agent
+log "Configuring cloud-init..."
+echo "datasource_list: [ ConfigDrive, NoCloud, None ]" | sudo tee /etc/cloud/cloud.cfg.d/90_dpkg.cfg > /dev/null
 
-echo "✓ QEMU Guest Agent installed and enabled"
-
-# ============================================
-# 8. 配置 cloud-init
-# ============================================
-echo ""
-echo "==> Configuring cloud-init datasource priority..."
-
-sudo tee /etc/cloud/cloud.cfg.d/90_dpkg.cfg > /dev/null <<'EOF'
-# 优先使用 ConfigDrive 和 NoCloud 数据源
-datasource_list: [ ConfigDrive, NoCloud, None ]
-EOF
-
-echo "✓ Cloud-init configured"
-
-# ============================================
-# 9. 禁用 cloud-init 网络等待超时
-# ============================================
-echo ""
-echo "==> Configuring systemd network wait timeout..."
-
+log "Reducing systemd-networkd wait timeout..."
 sudo mkdir -p /etc/systemd/system/systemd-networkd-wait-online.service.d
-
-sudo tee /etc/systemd/system/systemd-networkd-wait-online.service.d/override.conf > /dev/null <<'EOF'
-[Service]
-TimeoutStartSec=5s
-EOF
-
-echo "✓ Network wait timeout configured"
+echo -e "[Service]\nTimeoutStartSec=5s" | sudo tee /etc/systemd/system/systemd-networkd-wait-online.service.d/override.conf > /dev/null
 
 # ============================================
-# 10. 预装 VS Code Server（避免首次连接下载）
+# 7. VS Code Server (Pre-install)
 # ============================================
-echo ""
-echo "==> Pre-installing VS Code Server..."
+log "Pre-installing VS Code Server..."
 
-# 使用 dl-vscode-server 脚本安装 VS Code Server
-# https://github.com/b01/dl-vscode-server
-VSCODE_DIR="/etc/skel/.vscode-server"
+# Prepare directories with correct permissions
+sudo mkdir -p "${VSCODE_SERVER_DIR}" "/etc/skel/.vscode"
 
-# 创建目录并临时设置权限，允许脚本写入（脚本会在 HOME 目录创建符号链接）
-sudo mkdir -p "$VSCODE_DIR"
-sudo mkdir -p "/etc/skel/.vscode"
-sudo chmod 777 /etc/skel
-sudo chmod 777 "$VSCODE_DIR"
-sudo chmod 777 "/etc/skel/.vscode"
+# Fetch latest commit
+VSCODE_COMMIT=$(curl -fsSL "https://update.code.visualstudio.com/api/commits/stable/server-linux-x64" | sed 's/^\["\([^"]*\).*$/\1/')
+log "Latest VS Code stable commit: ${VSCODE_COMMIT}"
 
-# 使用本地 download-vs-code.sh 脚本（来自 b01/dl-vscode-server）
-VSCODE_SCRIPT="/tmp/scripts/download-vs-code.sh"
-chmod +x "$VSCODE_SCRIPT"
+# Use a temporary home for installation to avoid polluting root or needing insecure perms
+TMP_HOME=$(mktemp -d)
+cp "${TMP_SCRIPTS_DIR}/download-vs-code.sh" "${TMP_HOME}/"
+chmod +x "${TMP_HOME}/download-vs-code.sh"
 
-# 获取最新 stable commit ID
-VSCODE_COMMIT=$(curl -fsSL "https://update.code.visualstudio.com/api/commits/stable/server-linux-x64" 2>/dev/null | sed 's/^\["\([^"]*\).*$/\1/')
-echo "Latest VS Code stable commit: $VSCODE_COMMIT"
+export HOME="${TMP_HOME}"
+"${TMP_HOME}/download-vs-code.sh" --use-commit "${VSCODE_COMMIT}" linux x64
+"${TMP_HOME}/download-vs-code.sh" --use-commit "${VSCODE_COMMIT}" --cli linux x64
+"${TMP_HOME}/download-vs-code.sh" --use-commit "${VSCODE_COMMIT}" --web linux x64
 
-# 临时设置 HOME 为 /etc/skel，让脚本安装到骨架目录
-export HOME="/etc/skel"
+# Move Server/CLI artifacts to /etc/skel
+sudo cp -r "${TMP_HOME}/.vscode-server"/* "${VSCODE_SERVER_DIR}/"
+sudo cp -r "${TMP_HOME}/.vscode"/* "/etc/skel/.vscode/"
 
-echo "Installing VS Code Server for Remote-SSH..."
-"$VSCODE_SCRIPT" --use-commit "$VSCODE_COMMIT" linux x64
+# Move Web artifacts to /opt/vscode-web
+log "Installing VS Code Web..."
+sudo mkdir -p "${VSCODE_WEB_DIR}"
+if [ -d "${TMP_HOME}/.vscode-web" ]; then
+    sudo cp -r "${TMP_HOME}/.vscode-web"/* "${VSCODE_WEB_DIR}/"
+    echo "${VSCODE_COMMIT}" | sudo tee "${VSCODE_WEB_DIR}/.commit_id" > /dev/null
+    log "VS Code Web installed."
+else
+    warn "VS Code Web download failed (directory not found)."
+fi
 
-echo "Installing VS Code CLI..."
-"$VSCODE_SCRIPT" --use-commit "$VSCODE_COMMIT" --cli linux x64
+# Clean up
+rm -rf "${TMP_HOME}"
 
-# 恢复正确的权限
-sudo chmod 755 /etc/skel
-sudo chmod -R 755 "$VSCODE_DIR"
-sudo chmod -R 755 "/etc/skel/.vscode"
+# Set permissions
+sudo chmod -R 755 "${VSCODE_SERVER_DIR}" "/etc/skel/.vscode" "${VSCODE_WEB_DIR}"
+echo "${VSCODE_COMMIT}" | sudo tee "${VSCODE_SERVER_DIR}/.commit_id" > /dev/null
 
-# 写入 commit ID 供 cloud-init 使用
-echo "$VSCODE_COMMIT" | sudo tee "$VSCODE_DIR/.commit_id" > /dev/null
-echo "✓ VS Code Server pre-installed (commit: $VSCODE_COMMIT)"
+# ============================================
+# 8. Install Custom Scripts
+# ============================================
+log "Installing custom scripts..."
 
-# 安装 VS Code Web（单独处理，dl-vscode-server 不支持）
-echo "Installing VS Code Web..."
-VSCODE_WEB_DIR="/opt/vscode-web"
-sudo mkdir -p "$VSCODE_WEB_DIR"
-if [ -n "$VSCODE_COMMIT" ]; then
-    WEB_URL="https://update.code.visualstudio.com/commit:$VSCODE_COMMIT/server-linux-x64-web/stable"
-    if curl -fsSL --retry 3 "$WEB_URL" -o "/tmp/vscode-web.tar.gz"; then
-        sudo tar -xzf /tmp/vscode-web.tar.gz -C "$VSCODE_WEB_DIR" --strip-components=1
-        sudo chmod +x "$VSCODE_WEB_DIR/bin/code-server" 2>/dev/null || true
-        sudo chmod +x "$VSCODE_WEB_DIR/node" 2>/dev/null || true
-        echo "$VSCODE_COMMIT" | sudo tee "$VSCODE_WEB_DIR/.commit_id" > /dev/null
-        echo "✓ VS Code Web installed to $VSCODE_WEB_DIR"
-        rm -f /tmp/vscode-web.tar.gz
+install_script() {
+    local src="$1"
+    local dest="$2"
+    if [ -f "$src" ]; then
+        sudo cp "$src" "$dest"
+        sudo chmod +x "$dest"
+        echo "✓ Installed $(basename "$dest")"
     else
-        echo "⚠️ VS Code Web download failed"
+        warn "$(basename "$dest") not found."
     fi
-fi
+}
+
+install_script "${TMP_SCRIPTS_DIR}/route-switch.sh" "/usr/local/sbin/route-switch.sh"
+install_script "${TMP_SCRIPTS_DIR}/mount-nfs-share.sh" "/usr/local/bin/mount-nfs-share.sh"
 
 # ============================================
-# 11. 安装自定义脚本
+# 9. Finalize
 # ============================================
-echo ""
-echo "==> Installing custom scripts..."
-
-# 安装路由切换脚本
-if [ -f "/tmp/scripts/route-switch.sh" ]; then
-    sudo cp /tmp/scripts/route-switch.sh /usr/local/sbin/route-switch.sh
-    sudo chmod +x /usr/local/sbin/route-switch.sh
-    echo "✓ route-switch.sh installed"
-else
-    echo "⚠️ route-switch.sh not found in /tmp/scripts/"
-fi
-
-# 安装 NFS 挂载脚本
-if [ -f "/tmp/scripts/mount-nfs-share.sh" ]; then
-    sudo cp /tmp/scripts/mount-nfs-share.sh /usr/local/bin/mount-nfs-share.sh
-    sudo chmod +x /usr/local/bin/mount-nfs-share.sh
-    echo "✓ mount-nfs-share.sh installed"
-else
-    echo "⚠️ mount-nfs-share.sh not found in /tmp/scripts/"
-fi
-
-# ============================================
-# 12. 写入模板构建时间
-# ============================================
-echo ""
-echo "==> Writing template build metadata..."
-
-BUILD_TIME_UTC="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
-sudo tee /etc/template-build-info > /dev/null <<EOF
-TEMPLATE_BUILD_TIME_UTC=${BUILD_TIME_UTC}
+log "Writing template metadata..."
+cat <<EOF | sudo tee /etc/template-build-info > /dev/null
+TEMPLATE_BUILD_TIME_UTC=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 TEMPLATE_TYPE=cloud-image
+GO_VERSION=${GO_VERSION}
+NODE_VERSION=$(node -v || echo "not installed")
+PNPM_VERSION=$(pnpm -v || echo "not installed")
+VSCODE_COMMIT=${VSCODE_COMMIT}
+VSCODE_SERVER_DIR=${VSCODE_SERVER_DIR}
+VSCODE_WEB_DIR=${VSCODE_WEB_DIR}
 EOF
 
-echo "✓ Template build metadata written: ${BUILD_TIME_UTC}"
-
-# ============================================
-# 13. 切换回主路由
-# ============================================
-echo ""
-echo "==> Switching back to main router..."
-
-if [ -f "/usr/local/sbin/route-switch.sh" ]; then
-    sudo /usr/local/sbin/route-switch.sh to-main || echo "⚠️ Route switch back failed"
-else
-    echo "⚠️ route-switch.sh not installed, skipping route switch"
+log "Switching back to main router..."
+if [ -x "/usr/local/sbin/route-switch.sh" ]; then
+    sudo "/usr/local/sbin/route-switch.sh" to-main || warn "Route switch back failed."
 fi
 
-# ============================================
-# 完成
-# ============================================
-echo ""
-echo "============================================"
-echo "System setup completed successfully!"
-echo "============================================"
+log "System setup completed successfully!"

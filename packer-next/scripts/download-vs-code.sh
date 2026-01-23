@@ -136,6 +136,25 @@ install_server() {
     echo "done"
 }
 
+install_web() {
+    echo "setup directories:"
+    mkdir -vp ~/.vscode-web
+    echo "done"
+
+    # Extract the tarball to the right location.
+    printf "%s" "extracting ${archive}..."
+    tar -xz -C ~/.vscode-web --strip-components=1 --no-same-owner -f "/tmp/${archive}"
+    
+    # Make binaries executable
+    chmod +x ~/.vscode-web/bin/code-server
+    chmod +x ~/.vscode-web/node
+    
+    # Write commit id
+    echo "${commit_sha}" > ~/.vscode-web/.commit_id
+    
+    echo "done"
+}
+
 ## Parse command line options, proper
 getopt --test > /dev/null && true
 if [ $? -ne 4 ]; then
@@ -143,7 +162,7 @@ if [ $? -ne 4 ]; then
     exit 1
 fi
 
-LONG_OPTS=help,insider,dump-sha,cli,alpine,extensions:,use-commit:
+LONG_OPTS=help,insider,dump-sha,cli,web,alpine,extensions:,use-commit:
 OPTIONS=h
 
 PARSED=$(getopt --options=${OPTIONS} --longoptions=${LONG_OPTS} --name "$0" -- "${@}") || exit 1
@@ -155,6 +174,7 @@ BUILD="stable"
 BIN_TYPE="server"
 DUMP_COMMIT_SHA=""
 IS_ALPINE=0
+IS_WEB=0
 USE_COMMIT=""
 
 while [ true ]; do
@@ -169,6 +189,10 @@ while [ true ]; do
             ;;
         --cli)
             BIN_TYPE="cli"
+            shift
+            ;;
+        --web)
+            IS_WEB=1
             shift
             ;;
         --alpine)
@@ -254,9 +278,14 @@ if [ "${DUMP_COMMIT_SHA}" = "yes" ]; then
     exit 0
 fi
 
-echo "attempting to download and pre-install VS Code ${BIN_TYPE} version '${commit_sha}'"
+if [ ${IS_WEB} -eq 1 ]; then
+    echo "attempting to download and pre-install VS Code Web version '${commit_sha}'"
+    options="server-${PLATFORM}-${ARCH}-web"
+else
+    echo "attempting to download and pre-install VS Code ${BIN_TYPE} version '${commit_sha}'"
+    options="${BIN_TYPE}-${PLATFORM}-${ARCH}"
+fi
 
-options="${BIN_TYPE}-${PLATFORM}-${ARCH}"
 archive="vscode-${options}.tar.gz"
 
 # Download VS Code tarball to the current directory.
@@ -266,7 +295,9 @@ curl -s --fail -L "${url}" -o "/tmp/${archive}"
 echo "done"
 
 # Based on the binary type chosen, perform the installation.
-if [ "${BIN_TYPE}" = "cli" ]; then
+if [ ${IS_WEB} -eq 1 ]; then
+    install_web
+elif [ "${BIN_TYPE}" = "cli" ]; then
     install_cli
 else
     install_server
