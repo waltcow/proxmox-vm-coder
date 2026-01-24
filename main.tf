@@ -95,7 +95,7 @@ variable "clone_template_vmid" {
 }
 
 variable "vscode_commit_id" {
-  description = "VS Code Server 的 commit ID (用于固定版本)"
+  description = "VS Code Web 的 commit ID (用于固定版本)"
   type        = string
   default     = "c9d77990917f3102ada88be140d28b038d1dd7c7"
 }
@@ -200,6 +200,15 @@ resource "coder_agent" "main" {
     interval     = 600
     timeout      = 30
     order        = 3
+  }
+
+  metadata {
+    display_name = "IP 地址"
+    key          = "ip_address"
+    script       = "hostname -I | awk '{print $1}'"
+    interval     = 600
+    timeout      = 5
+    order        = 4
   }
 }
 

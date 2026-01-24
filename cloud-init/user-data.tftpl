@@ -38,24 +38,24 @@ write_files:
       [Install]
       WantedBy=multi-user.target
 
-  - path: /etc/systemd/system/copy-vscode-cache.service
+  - path: /etc/systemd/system/copy-vscode-web-cache.service
     permissions: "0644"
     owner: root:root
     content: |
       [Unit]
-      Description=Setup VS Code Server from pre-installed cache
+      Description=Setup VS Code Web from pre-installed cache
       After=local-fs.target
       Before=coder-agent.service
 
       [Service]
       Type=oneshot
-      ExecStart=/usr/local/bin/setup-vscode-server.sh
+      ExecStart=/usr/local/bin/setup-vscode-web.sh
       RemainAfterExit=yes
 
       [Install]
       WantedBy=multi-user.target
 
-  - path: /usr/local/bin/setup-vscode-server.sh
+  - path: /usr/local/bin/setup-vscode-web.sh
     permissions: "0755"
     owner: root:root
     content: |
@@ -63,64 +63,13 @@ write_files:
       set -e
 
       LINUX_USER="${linux_user}"
-      LOG_FILE="/var/log/vscode-server-setup.log"
+      LOG_FILE="/var/log/vscode-web-setup.log"
 
       log() {
         echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" | tee -a "$LOG_FILE"
       }
 
-      log "=== Setting up VS Code Server ==="
-
-      # Copy VS Code Server from /etc/skel
-      if [ -d "/etc/skel/.vscode-server" ]; then
-        log "Found pre-installed VS Code Server in /etc/skel"
-
-        PREINSTALLED_COMMIT=""
-        if [ -f "/etc/skel/.vscode-server/.commit_id" ]; then
-          PREINSTALLED_COMMIT=$(cat "/etc/skel/.vscode-server/.commit_id" | tr -d '[:space:]')
-          log "Pre-installed VS Code commit: $PREINSTALLED_COMMIT"
-        fi
-
-        USER_COMMIT=""
-        if [ -f "/home/$LINUX_USER/.vscode-server/.commit_id" ]; then
-          USER_COMMIT=$(cat "/home/$LINUX_USER/.vscode-server/.commit_id" | tr -d '[:space:]')
-        fi
-
-        NEED_COPY=false
-        if [ ! -d "/home/$LINUX_USER/.vscode-server/bin" ]; then
-          log "VS Code Server not found in user home"
-          NEED_COPY=true
-        elif [ "$PREINSTALLED_COMMIT" != "$USER_COMMIT" ]; then
-          log "Version mismatch: pre-installed=$PREINSTALLED_COMMIT, user=$USER_COMMIT"
-          NEED_COPY=true
-        fi
-
-        if [ "$NEED_COPY" = true ]; then
-          log "Copying VS Code Server to user home..."
-          if command -v rsync >/dev/null 2>&1; then
-            rsync -a "/etc/skel/.vscode-server/" "/home/$LINUX_USER/.vscode-server/"
-          else
-            rm -rf "/home/$LINUX_USER/.vscode-server"
-            cp -a "/etc/skel/.vscode-server" "/home/$LINUX_USER/"
-          fi
-          chown -R $LINUX_USER:$LINUX_USER "/home/$LINUX_USER/.vscode-server"
-          log "✓ VS Code Server copied"
-        else
-          log "VS Code Server already up-to-date in user home"
-        fi
-      else
-        log "WARNING: No pre-installed VS Code Server found in /etc/skel"
-      fi
-
-      # Copy ~/.vscode directory (CLI tunnel support)
-      if [ -d "/etc/skel/.vscode" ]; then
-        if [ ! -d "/home/$LINUX_USER/.vscode/cli" ]; then
-          log "Copying VS Code CLI config..."
-          cp -a "/etc/skel/.vscode" "/home/$LINUX_USER/"
-          chown -R $LINUX_USER:$LINUX_USER "/home/$LINUX_USER/.vscode"
-          log "✓ VS Code CLI config copied"
-        fi
-      fi
+      log "=== Setting up VS Code Web ==="
 
       # Copy VS Code Web to /tmp
       if [ -d "/opt/vscode-web" ] && [ -f "/opt/vscode-web/bin/code-server" ]; then
@@ -137,13 +86,15 @@ write_files:
         else
           log "VS Code Web already exists in /tmp/vscode-web"
         fi
+      else
+        log "WARNING: No pre-installed VS Code Web found in /opt/vscode-web"
       fi
 
-      log "=== VS Code setup completed ==="
+      log "=== VS Code Web setup completed ==="
 
 runcmd:
   - /usr/local/bin/mount-nfs-share.sh
-  - systemctl enable --now copy-vscode-cache.service
+  - systemctl enable --now copy-vscode-web-cache.service
   - systemctl enable --now coder-agent.service
 
 final_message: "Cloud-init complete on ${hostname}"
